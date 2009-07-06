@@ -1,0 +1,5 @@
+# ignore textmate project file
+*.tmproj
+*.sqlite
+results
+*.pyc
