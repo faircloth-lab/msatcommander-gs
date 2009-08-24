@@ -1,5 +1,6 @@
 # ignore textmate project file
 *.tmproj
 *.sqlite
+*.graffle
 results
 *.pyc
