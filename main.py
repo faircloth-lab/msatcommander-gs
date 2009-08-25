@@ -28,7 +28,7 @@ def revComp(seq):
     # translate it, reverse, return
     return seq.translate(bases)[::-1]
 
-def revTags(tags):
+def revCompTags(tags):
     revTags = {}
     for tag in tags:
         revTags[revComp(tag)] = tags[tag]
@@ -48,11 +48,11 @@ def tagLibrary(mids, linkers, clust):
 def trim(record, left=None, right=None):
     '''takes regular expression objects'''
     if left and right:
-        record = record[left.end():right.start()]
+        record = record[left:right]
     elif left:
-        record = record[left.end():]
+        record = record[left:]
     elif right:
-        record = record[:right.start()]
+        record = record[:right]
     return record
 
 def matches(seq_match_span, tag_match_span, allowed_errors):
@@ -93,9 +93,9 @@ def smithWaterman(seq, tags, allowed_errors):
             high_score['seq_match_span'] = seq_match_span
             high_score['errors'] = errors
     if high_score['matches']:
-        return high_score['tag'], high_score['matches'], high_score['seq_match'], high_score['seq_match_span'], high_score['start']
+        return high_score['tag'], high_score['matches'], high_score['seq_match'], high_score['seq_match_span'], high_score['start'], high_score['end']
     else:
-        return None, None, None, None, None
+        return None
 
 def tagRegexer(seq, tags, left=True, right=False, both=False):
     for tag in tags:
@@ -131,76 +131,124 @@ def qualTrimming(record, min_score=10):
     # find runs of ambiguous bases at 5' and 3' ends
     left_re, right_re = re.compile('^N+'),re.compile('N+$')
     left_trim, right_trim = re.search(left_re, s), re.search(right_re, s)
-    # trim them off
-    trimmed = trim(record, left_trim, right_trim)
-    return trimmed
+    if left_trim:
+        left_trim = left_trim.end()
+    if right_trim:
+        right_trim = right_trim.end()
+    return trim(record, left_trim, right_trim)
 
 def midTrim(record, tags, max_gap_char=5, **kwargs):
-    #if record.id == 'FX5ZTWB02DF2VB':
+    #if record.id == 'MID_No_Error_ATACGACGTA':
     #    pdb.set_trace()
     s = str(record.seq)
-    mid, mid_trim = tagRegexer(s, tags)
-    if mid_trim:
-        trimmed = trim(record, mid_trim)
-        return mid, trimmed, mid, 'Regex'
-    elif kwargs['fuzzy']:
-        mid, matches, seq_match, seq_match_span, start = smithWaterman(s, tags, 1)
-        # we need to ensure that we aren't matching a potential mid-like
-        # sequence in the latter portions of the individual sequence
-        # so we check to make sure the MID start is within max_gap_char bases
-        if matches and start < max_gap_char:
-            #pdb.set_trace()
-            tag_re = re.compile(('%s') % (seq_match_span))
-            left_trim = re.search(tag_re, s)
-            trimmed = trim(record, left_trim)
-            return mid, trimmed, seq_match_span, 'SmithWaterman'
-    return None, None, None, None
+    mid = leftLinker(s, tags, max_gap_char, fuzzy=kwargs['fuzzy'])
+    if mid:
+        trimmed = trim(record, mid[3])
+        tag, m_type, seq_match = mid[0], mid[1], mid[4]
+        return tag, trimmed, seq_match, m_type
+    else:
+        return None
+
+def SWMatchPos(seq_match_span, start, stop):
+    # slice faster than ''.startswith()
+    if seq_match_span[0] == '-':
+        start = start + seq_match_span.count('-')
+    else:
+        stop = stop - seq_match_span.count('-')
+    return start, stop
+
+def leftLinker(s, tags, max_gap_char, **kwargs):
+    for tag in tags:
+        r = re.compile(('^%s') % (tag))
+        match = re.search(r, s)
+        if match:
+            m_type = 'regex'
+            start, stop = match.start(), match.end()
+            # by default, this is true
+            seq_match = tag
+            break
+    #if s == 'ACCTCGTGCGGAATCGAGAGAGAGAGAGAGAGAGAGAGAGAGAGAGAGAGAG':
+    #    pdb.set_trace()
+    if not match and kwargs['fuzzy']:
+        match = smithWaterman(s, tags, 1)
+        # we can trim w/o regex
+        if match:
+            m_type = 'smithwaterman'
+            tag = match[0]
+            seq_match = match[3]
+            start, stop = SWMatchPos(match[3],match[4], match[5])
+    if match:
+        return tag, m_type, start, stop, seq_match
+    else:
+        return None
+
+def rightLinker(s, tags, max_gap_char, **kwargs):
+    #if s == 'GAGAGAGAGAGAGAGAGAGAGAGAGAGAGAGAGAGAG':
+    #    pdb.set_trace()
+    revtags = revCompTags(tags)
+    for tag in revtags:
+        r = re.compile(('%s$') % (tag))
+        match = re.search(r, s)
+        if match:
+            m_type = 'regex'
+            start, stop = match.start(), match.end()
+            # by default, this is true
+            seq_match = tag
+            break
+    if not match and kwargs['fuzzy']:
+        match = smithWaterman(s, revtags, 1)
+        # we can trim w/o regex
+        if match:
+            m_type = 'smithwaterman'
+            tag = match[0]
+            seq_match = match[3]
+            start, stop = SWMatchPos(match[3],match[4], match[5])
+    if match:
+        return revComp(tag), m_type, start, stop, seq_match
+    else:
+        return None
 
 def linkerTrim(record, tags, max_gap_char=5, **kwargs):
-    #if record.id == 'MID_NoError_SimpleX_OneError_FandRevcomp':
+    '''Use regular expression and (optionally) fuzzy string matching
+    to locate and trim linkers from sequences'''
+    #if record.id == 'MID_NoError_SimpleX_NoError_FandRevcomp':
     #    pdb.set_trace()
-    s = str(record.seq)
-    link, left_link_trim, right_link_trim = tagRegexer(s, tags, False, False, True)
-    # regex is only searching beginning and end of string.  i,e. 
-    # "^Tag_Sequence" and "Tag_sequence$"
-    if left_link_trim and right_link_trim:
-        trimmed = trim(record, left_link_trim, right_link_trim)
-        return link, trimmed, link, tags[link], 'RegexBoth'
-    elif left_link_trim:
-        trimmed = trim(record, left_link_trim)
-        return link, trimmed, link, tags[link], 'RegexForward'
-    elif right_link_trim:
-        trimmed = trim(record, None, right_link_trim)
-        return link, trimmed, link, tags[link], 'RegexReverseComp'
-    elif kwargs['fuzzy']:
-        l_tag, left_matches, left_seq_match, left_seq_match_span, left_start = smithWaterman(s, tags, 1)
-        # check for reverse complement of linker
-        reverseTags = revTags(tags)
-        r_tag, right_matches, right_seq_match, right_seq_match_span, right_start = smithWaterman(s, reverseTags, 1)
-        if (l_tag and r_tag) and (l_tag == r_tag):
-            if left_start < max_gap_char and right_start > (len(s) - (len(r_tag) + max_gap_char)):
-                left_link_re = re.compile(('%s') % (left_seq_match_span))
-                right_link_re = re.compile(('%s') % (right_seq_match_span))
-                left_trim = re.search(left_link_re, s)
-                right_trim = re.search(right_link_re, s)
-                trimmed = trim(record, left_trim, right_trim)
-                return l_tag, trimmed, left_seq_match_span, tags[l_tag], 'SmithWatermanBoth'
-        elif l_tag:
-            #pdb.set_trace()
-            if left_start < max_gap_char:
-                left_link_re = re.compile(('%s') % (left_seq_match_span))
-                left_trim = re.search(left_link_re, s)
-                trimmed = trim(record, left_trim)
-                return l_tag, trimmed, left_seq_match_span, tags[l_tag], 'SmithWatermanForward'
-        elif r_tag:
-            if right_start > (len(s) - (len(r_tag) + max_gap_char)):
-                right_link_re = re.compile(('%s') % (right_seq_match_span))
-                right_trim = re.search(right_link_re, s)
-                trimmed = trim(record, None, right_trim)
-                # make sure to return the forward sequence of the reverse_complement
-                # so that our dictionary keys match up (keys are all forward)
-                return revComp(r_tag), trimmed, right_seq_match_span, tags[revComp(r_tag)], 'SmithWatermanReverseComp'
-    return None, None, None, None, None
+    m_type  = False
+    s       = str(record.seq)
+    left    = leftLinker(s, tags, max_gap_char=5, fuzzy=kwargs['fuzzy'])
+    right   = rightLinker(s, tags, max_gap_char=5, fuzzy=kwargs['fuzzy'])
+    if left and right and left[0] == right[0]:
+        # we can have lots of conditional matches here
+        if left[2] < max_gap_char and right[2] > (len(s) - (len(right[0]) + max_gap_char)):
+            trimmed = trim(record, left[3], right[2])
+            # left and right are identical so pass back the left info...
+            tag, m_type, seq_match = left[0], left[1]+'-both', left[4]
+        else:
+            pass
+    elif left and right and left[0] != right[0]:
+        # flag
+        pass
+    elif left:
+        if left[2] < max_gap_char:
+            trimmed = trim(record, left[3])
+            tag, m_type, seq_match = left[0], left[1], left[4]
+        else:
+            # flag
+            pass
+    elif right:
+        if right[2] > (len(s) - (len(right[0]) + max_gap_char)):
+            trimmed = trim(record, None, right[2])
+            tag, m_type, seq_match = right[0], right[1], right[4]
+        else:
+            # flag
+            pass
+    if m_type:
+        try:
+            return tag, trimmed, seq_match, tags[tag], m_type
+        except:
+            pdb.set_trace()
+    else:
+        return None
 
 def reverse(items):
     '''build a reverse dictionary from a list of tuples'''
@@ -209,7 +257,6 @@ def reverse(items):
         t = (i[1],i[0])
         l.append(t)
     return dict(l)
-
 
 def createSeqTable(c):
     try:
@@ -231,16 +278,25 @@ def worker(record, tags, reverse_mid, reverse_linkers):
     N_count = str(qual_trimmed.seq).count('N')
     #pdb.set_trace()
     # search on 5' (left) end for MID
-    mid_seq, mid_trimmed, mid_match, mid_method = midTrim(qual_trimmed, tags, fuzzy=True)
+    mid = midTrim(qual_trimmed, tags, fuzzy=True)
     #pdb.set_trace()
-    if mid_trimmed:
+    if mid:
         # if MID, search for exact matches (for and revcomp) on Linker
         # provided no exact matches, use fuzzy matching (Smith-Waterman) +
         # error correction to find Linker
-        linker_seq, linker_trimmed, linker_match, linker_cluster, linker_method = linkerTrim(mid_trimmed, tags[mid_seq], fuzzy=True)
+        mid, trimmed, seq_match, m_type = mid
+        #pdb.set_trace()
+        linker = linkerTrim(trimmed, tags[mid], fuzzy=True)
+        if linker:
+            l_tag, l_trimmed, l_seq_match, l_critter, l_m_type = linker
+        else:
+            l_tag, l_trimmed, l_seq_match, l_critter, l_m_type = (None,) * 5
     else:
-        linker_seq, linker_trimmed, linker_match, linker_cluster, linker_method = None, None, None, None, None
-    cur.execute("INSERT INTO SEQUENCE (name, mid, mid_seq, mid_match, mid_method, linker, linker_seq, linker_match, linker_method, cluster, n_count, untrimmed_len) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (record.id, reverse_mid[mid_seq], mid_seq, mid_match, mid_method, reverse_linkers[linker_seq], linker_seq, linker_match, linker_method, linker_cluster, N_count, untrimmed_len,))
+        mid, trimmed, seq_match, m_type = (None,) * 4
+        l_tag, l_trimmed, l_seq_match, l_critter, l_m_type = (None,) * 5
+    #pdb.set_trace()
+    cur.execute("INSERT INTO SEQUENCE (name, mid, mid_seq, mid_match, mid_method, linker, linker_seq, linker_match, linker_method, cluster, n_count, untrimmed_len) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (record.id, reverse_mid[mid], mid, seq_match, m_type, reverse_linkers[l_tag], l_tag, l_seq_match, l_m_type, l_critter, N_count, untrimmed_len,))
+    conn.commit()
     conn.close()
     return
 
