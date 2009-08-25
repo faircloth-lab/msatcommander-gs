@@ -13,8 +13,10 @@ import pdb
 import time
 import numpy
 import string
-import sqlite3
+#import sqlite3
+import MySQLdb
 import ConfigParser
+import multiprocessing
 from Bio import Seq
 from Bio import pairwise2
 from Bio.SeqIO import QualityIO
@@ -208,9 +210,43 @@ def reverse(items):
         l.append(t)
     return dict(l)
 
+
+def createSeqTable(c):
+    try:
+        c.execute('''DROP TABLE SEQUENCE''')
+    except:
+        pass
+    c.execute('''CREATE TABLE SEQUENCE (id INT UNSIGNED NOT NULL AUTO_INCREMENT,name VARCHAR(100),mid VARCHAR(30),mid_seq VARCHAR(30),mid_match VARCHAR(30),mid_method VARCHAR(50),linker VARCHAR(30),linker_seq VARCHAR(30),linker_match VARCHAR(30),linker_method VARCHAR(50),cluster VARCHAR(50),n_count SMALLINT UNSIGNED,untrimmed_len SMALLINT UNSIGNED,PRIMARY KEY (id))''')
+
+def worker(record, tags, reverse_mid, reverse_linkers):
+    # we need a separate connection for each mysql cursor or they are going
+    # start getting into locking hell and things go poorly. This is the
+    # easiest solution.
+    conn = MySQLdb.connect(user="python", passwd="BgDBYUTvmzA3", db="454_msatcommander")
+    cur = conn.cursor()
+    #print os.getpid()
+    # convert low-scoring bases to 'N'
+    untrimmed_len = len(record.seq)
+    qual_trimmed = qualTrimming(record, 10)
+    N_count = str(qual_trimmed.seq).count('N')
+    #pdb.set_trace()
+    # search on 5' (left) end for MID
+    mid_seq, mid_trimmed, mid_match, mid_method = midTrim(qual_trimmed, tags, fuzzy=True)
+    #pdb.set_trace()
+    if mid_trimmed:
+        # if MID, search for exact matches (for and revcomp) on Linker
+        # provided no exact matches, use fuzzy matching (Smith-Waterman) +
+        # error correction to find Linker
+        linker_seq, linker_trimmed, linker_match, linker_cluster, linker_method = linkerTrim(mid_trimmed, tags[mid_seq], fuzzy=True)
+    else:
+        linker_seq, linker_trimmed, linker_match, linker_cluster, linker_method = None, None, None, None, None
+    cur.execute("INSERT INTO SEQUENCE (name, mid, mid_seq, mid_match, mid_method, linker, linker_seq, linker_match, linker_method, cluster, n_count, untrimmed_len) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (record.id, reverse_mid[mid_seq], mid_seq, mid_match, mid_method, reverse_linkers[linker_seq], linker_seq, linker_match, linker_method, linker_cluster, N_count, untrimmed_len,))
+    conn.close()
+    return
+
 def main():
+    #pdb.set_trace()
     start_time = time.time()
-    print 'Started: ', time.strftime("%a %b %d, %Y  %H:%M:%S", time.localtime(start_time))
     conf = ConfigParser.ConfigParser()
     conf.read('mc454.conf')
     mid, reverse_mid = dict(conf.items('MID')), reverse(conf.items('MID'))
@@ -220,57 +256,61 @@ def main():
     clust = conf.items('Clusters')
     # build tag library 1X
     tags = tagLibrary(mid, linkers, clust)
-    ###########
-    # Database Stuff - to be moved
-    ###########
-    try:
-        os.remove('screening_db.sqlite')
-    except:
-        pass
-    conn = sqlite3.connect('screening_db.sqlite')
+    # get multiprocessing
+    n_procs = conf.get('Nprocs','processors')
+    if n_procs == 'Auto':
+        n_procs = multiprocessing.cpu_count() - 1
+    else:
+        n_procs = int(n_procs)
+    print 'Multiprocessing.  Number of processors = ', n_procs
+    print 'Started: ', time.strftime("%a %b %d, %Y  %H:%M:%S", time.localtime(start_time))
+    #create dbase table for records
+    #connections = [MySQLdb.connect(user="python", passwd="BgDBYUTvmzA3", db="454_msatcommander") for i in range(n_procs)]
+    # create a shitload of cursors - not sure if this will work
+    #cursors = [i.cursor() for i in connections]
+    #pdb.set_trace()
+    # crank out a new table for the data
+    conn = MySQLdb.connect(user="python", passwd="BgDBYUTvmzA3", db="454_msatcommander")
     cur = conn.cursor()
-    cur.execute('''CREATE TABLE sequence (
-    id integer primary key autoincrement,
-    name text,
-    mid text,
-    mid_seq text,
-    mid_match text,
-    mid_method text,
-    linker text,
-    linker_seq text,
-    linker_match text,
-    linker_method text,
-    cluster text,
-    n_count integer,
-    untrimmed_len integer)''')
-    conn.commit()
+    createSeqTable(cur)
     # for each sequence
-    for record in QualityIO.PairedFastaQualIterator(
-    open(conf.get('Input','sequence'), "rU"), 
-    open(conf.get('Input','qual'), "rU")):
-        #print record.id
-        # convert low-scoring bases to 'N'
-        untrimmed_len = len(record.seq)
-        qual_trimmed = qualTrimming(record, 10)
-        N_count = str(qual_trimmed.seq).count('N')
-        #pdb.set_trace()
-        # search on 5' (left) end for MID
-        mid_seq, mid_trimmed, mid_match, mid_method = midTrim(qual_trimmed, tags, fuzzy=True)
-        #pdb.set_trace()
-        if mid_trimmed:
-            # if MID, search for exact matches (for and revcomp) on Linker
-            # provided no exact matches, use fuzzy matching (Smith-Waterman) +
-            # error correction to find Linker
-            linker_seq, linker_trimmed, linker_match, linker_cluster, linker_method = linkerTrim(mid_trimmed, tags[mid_seq], fuzzy=True)
-        else:
-            linker_seq, linker_trimmed, linker_match, linker_cluster, linker_method = None, None, None, None, None
-        cur.execute("INSERT INTO SEQUENCE (name, mid, mid_seq, mid_match, mid_method, linker, linker_seq, linker_match, linker_method, cluster, n_count, untrimmed_len) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (record.id, reverse_mid[mid_seq], mid_seq, mid_match, mid_method, reverse_linkers[linker_seq], linker_seq, linker_match, linker_method, linker_cluster, N_count, untrimmed_len))
-        #print record.id, reverse_mid[mid_seq], mid_match, mid_method, reverse_linkers[linker_seq], linker_match, linker_method, linker_cluster
-        conn.commit()
+    record = QualityIO.PairedFastaQualIterator(open(conf.get('Input','sequence'), "rU"), open(conf.get('Input','qual'), "rU"))
+    mproc=False
+    if mproc:
+        count = 0
+        try:
+            jobs = [None] * n_procs
+            while count < 5000:
+                #pdb.set_trace()
+                for i in range(n_procs):
+                    count +=1
+                    p = multiprocessing.Process(target=worker, args=(record.next(), tags, reverse_mid, reverse_linkers))
+                    jobs[i]=p
+                    p.start()
+            for j in jobs:
+                try:
+                    j.join()
+                except:
+                    pass
+        except StopIteration:
+            pass
+    else:
+        count = 0
+        try:
+            while count < 5000:
+                count +=1
+                worker(record.next(), tags, reverse_mid, reverse_linkers)
+        except StopIteration:
+            pass
     end_time = time.time()
     print 'Ended: ', time.strftime("%a %b %d, %Y  %H:%M:%S", time.localtime(end_time))
     print '\nTime for execution: ', (end_time - start_time)/60, 'minutes'
-    
+    # let the threads finish writing to the dbase.
+    #print "sleeping 10"
+    #time.sleep(5)
+    #for c in cursors:
+    #    c.close()
+    #db.close()
 
 if __name__ == '__main__':
     main()
