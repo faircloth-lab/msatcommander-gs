@@ -55,7 +55,7 @@ def trim(record, left=None, right=None):
         record = record[:right]
     return record
 
-def matches(seq_match_span, tag_match_span, allowed_errors):
+def matches(tag, seq_match_span, tag_match_span, allowed_errors):
     # deal with case where tag match might be perfect, but extremely gappy, 
     #e.g. ACGTCGTGCGGA-------------------------ATC
     if tag_match_span.count('-') > allowed_errors or seq_match_span.count('-') > allowed_errors:
@@ -67,21 +67,22 @@ def matches(seq_match_span, tag_match_span, allowed_errors):
         #pdb.set_trace()
         seq_array, tag_array = numpy.array(list(seq_match_span)), numpy.array(list(tag_match_span))
         matches = sum(seq_array == tag_array)
-        error = sum(seq_array != tag_array)
+        error = sum(seq_array != tag_array) + (len(tag) - len(tag_match_span.replace('-','')))
         #return sum((1 if s == tag_match_span[i] else 0) for i, s in enumerate(seq_match_span))
         return matches, error
 
 def smithWaterman(seq, tags, allowed_errors):
     '''Borrowed & heavily modified from http://github.com/chapmanb/bcbb/tree/master'''
-    #if seq == 'AAAACGTACGTGCGGATCTCCCCCTCAGCCTTTCCCTTCTACCAGACTAAAGAGATAGATAGATAAGATAGTA':
+    #if seq == 'ACGTCGTGCGGAGATGTGTATGGGATGTATGTAGGATGTGT':
     #    pdb.set_trace()
     high_score = {'tag':None, 'seq_match':None, 'mid_match':None, 'score':None, 'start':None, 'end':None, 'matches':None, 'errors':allowed_errors}
     for tag in tags:
         seq_match, tag_match, score, start, end = pairwise2.align.localms(seq, 
             tag, 5.0, -4.0, -9.0, -0.5, one_alignment_only=True)[0]
         seq_match_span, tag_match_span = seq_match[start:end], tag_match[start:end]
-        match, errors = matches(seq_match_span, tag_match_span, allowed_errors)
-        #errors = len(tag) - match
+        match, errors = matches(tag, seq_match_span, tag_match_span, allowed_errors)
+        #if seq == 'ACGTCGTGCGGAGATGTGTATGGGATGTATGTAGGATGTGT':
+        #    print tag, tag_match_span, seq_match_span, match, errors
         if match >= len(tag)-allowed_errors and match > high_score['matches'] and errors <= high_score['errors']:
             high_score['tag'] = tag
             high_score['seq_match'] = seq_match
@@ -173,7 +174,7 @@ def leftLinker(s, tags, max_gap_char, **kwargs):
         match = smithWaterman(s, tags, 1)
         # we can trim w/o regex
         if match:
-            m_type = 'smithwaterman'
+            m_type = 'fuzzy'
             tag = match[0]
             seq_match = match[3]
             start, stop = SWMatchPos(match[3],match[4], match[5])
@@ -199,7 +200,7 @@ def rightLinker(s, tags, max_gap_char, **kwargs):
         match = smithWaterman(s, revtags, 1)
         # we can trim w/o regex
         if match:
-            m_type = 'smithwaterman'
+            m_type = 'fuzzy'
             tag = match[0]
             seq_match = match[3]
             start, stop = SWMatchPos(match[3],match[4], match[5])
@@ -211,7 +212,7 @@ def rightLinker(s, tags, max_gap_char, **kwargs):
 def linkerTrim(record, tags, max_gap_char=5, **kwargs):
     '''Use regular expression and (optionally) fuzzy string matching
     to locate and trim linkers from sequences'''
-    #if record.id == 'MID_NoError_SimpleX_NoError_FandRevcomp':
+    #if record.id == 'FX5ZTWB02DOPOT':
     #    pdb.set_trace()
     m_type  = False
     s       = str(record.seq)
@@ -221,24 +222,27 @@ def linkerTrim(record, tags, max_gap_char=5, **kwargs):
         # we can have lots of conditional matches here
         if left[2] < max_gap_char and right[2] > (len(s) - (len(right[0]) + max_gap_char)):
             trimmed = trim(record, left[3], right[2])
-            # left and right are identical so pass back the left info...
-            tag, m_type, seq_match = left[0], left[1]+'-both', left[4]
+            # left and right are identical so largely pass back the left
+            # info... except for m_type which can be a combination
+            tag, m_type, seq_match = left[0], left[1]+'-'+right[1]+'-both', left[4]
         else:
             pass
     elif left and right and left[0] != right[0]:
         # flag
-        pass
+        if left[2] < max_gap_char and right[2] > (len(s) - (len(right[0]) + max_gap_char)):
+            trimmed = None
+            tag, m_type, seq_match = None, 'tag-mismatch', None
     elif left:
         if left[2] < max_gap_char:
             trimmed = trim(record, left[3])
-            tag, m_type, seq_match = left[0], left[1], left[4]
+            tag, m_type, seq_match = left[0], left[1]+'-left', left[4]
         else:
             # flag
             pass
     elif right:
         if right[2] > (len(s) - (len(right[0]) + max_gap_char)):
             trimmed = trim(record, None, right[2])
-            tag, m_type, seq_match = right[0], right[1], right[4]
+            tag, m_type, seq_match = right[0], right[1]+'-right', right[4]
         else:
             # flag
             pass
@@ -246,7 +250,7 @@ def linkerTrim(record, tags, max_gap_char=5, **kwargs):
         try:
             return tag, trimmed, seq_match, tags[tag], m_type
         except:
-            pdb.set_trace()
+            return tag, trimmed, seq_match, None, m_type
     else:
         return None
 
@@ -260,12 +264,12 @@ def reverse(items):
 
 def createSeqTable(c):
     try:
-        c.execute('''DROP TABLE SEQUENCE''')
+        c.execute('''DROP TABLE sequence''')
     except:
         pass
-    c.execute('''CREATE TABLE SEQUENCE (id INT UNSIGNED NOT NULL AUTO_INCREMENT,name VARCHAR(100),mid VARCHAR(30),mid_seq VARCHAR(30),mid_match VARCHAR(30),mid_method VARCHAR(50),linker VARCHAR(30),linker_seq VARCHAR(30),linker_match VARCHAR(30),linker_method VARCHAR(50),cluster VARCHAR(50),n_count SMALLINT UNSIGNED,untrimmed_len SMALLINT UNSIGNED,PRIMARY KEY (id))''')
+    c.execute('''CREATE TABLE sequence (id INT UNSIGNED NOT NULL AUTO_INCREMENT,name VARCHAR(100),mid VARCHAR(30),mid_seq VARCHAR(30),mid_match VARCHAR(30),mid_method VARCHAR(50),linker VARCHAR(30),linker_seq VARCHAR(30),linker_match VARCHAR(30),linker_method VARCHAR(50),cluster VARCHAR(50),n_count SMALLINT UNSIGNED,untrimmed_len SMALLINT UNSIGNED,PRIMARY KEY (id))''')
 
-def worker(record, tags, reverse_mid, reverse_linkers):
+def worker(record, qual, tags, reverse_mid, reverse_linkers):
     # we need a separate connection for each mysql cursor or they are going
     # start going into locking hell and things will go poorly. This is the
     # easiest/laziest solution.
@@ -273,7 +277,7 @@ def worker(record, tags, reverse_mid, reverse_linkers):
     cur = conn.cursor()
     # convert low-scoring bases to 'N'
     untrimmed_len = len(record.seq)
-    qual_trimmed = qualTrimming(record, 10)
+    qual_trimmed = qualTrimming(record, qual)
     N_count = str(qual_trimmed.seq).count('N')
     # search on 5' (left) end for MID
     mid = midTrim(qual_trimmed, tags, fuzzy=True)
@@ -287,13 +291,14 @@ def worker(record, tags, reverse_mid, reverse_linkers):
         linker = linkerTrim(trimmed, tags[mid], fuzzy=True)
         if linker:
             l_tag, l_trimmed, l_seq_match, l_critter, l_m_type = linker
+            concatenation = concatCheck(l_trimmed, tags)
         else:
             l_tag, l_trimmed, l_seq_match, l_critter, l_m_type = (None,) * 5
     else:
         mid, trimmed, seq_match, m_type = (None,) * 4
         l_tag, l_trimmed, l_seq_match, l_critter, l_m_type = (None,) * 5
     #pdb.set_trace()
-    cur.execute("INSERT INTO SEQUENCE (name, mid, mid_seq, mid_match, mid_method, linker, linker_seq, linker_match, linker_method, cluster, n_count, untrimmed_len) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (record.id, reverse_mid[mid], mid, seq_match, m_type, reverse_linkers[l_tag], l_tag, l_seq_match, l_m_type, l_critter, N_count, untrimmed_len,))
+    cur.execute("INSERT INTO sequence (name, mid, mid_seq, mid_match, mid_method, linker, linker_seq, linker_match, linker_method, cluster, n_count, untrimmed_len) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (record.id, reverse_mid[mid], mid, seq_match, m_type, reverse_linkers[l_tag], l_tag, l_seq_match, l_m_type, l_critter, N_count, untrimmed_len,))
     conn.commit()
     conn.close()
     return
@@ -308,29 +313,25 @@ def main():
     reverse_mid[None] = None
     reverse_linkers[None] = None
     clust = conf.items('Clusters')
+    qual = conf.getint('Qual', 'MIN_SCORE')
     # build tag library 1X
     tags = tagLibrary(mid, linkers, clust)
-    # get multiprocessing
-    n_procs = conf.get('Multiprocessing','processors')
-    if n_procs == 'Auto':
-        n_procs = multiprocessing.cpu_count() - 1
-    else:
-        n_procs = int(n_procs)
-    print 'Multiprocessing.  Number of processors = ', n_procs
     print 'Started: ', time.strftime("%a %b %d, %Y  %H:%M:%S", time.localtime(start_time))
-    #create dbase table for records
-    #connections = [MySQLdb.connect(user="python", passwd="BgDBYUTvmzA3", db="454_msatcommander") for i in range(n_procs)]
-    # create a shitload of cursors - not sure if this will work
-    #cursors = [i.cursor() for i in connections]
-    #pdb.set_trace()
     # crank out a new table for the data
     conn = MySQLdb.connect(user="python", passwd="BgDBYUTvmzA3", db="454_msatcommander")
     cur = conn.cursor()
     createSeqTable(cur)
     # for each sequence
     record = QualityIO.PairedFastaQualIterator(open(conf.get('Input','sequence'), "rU"), open(conf.get('Input','qual'), "rU"))
-    mproc=False
-    if mproc:
+    #pdb.set_trace()
+    if conf.getboolean('Multiprocessing', 'MULTIPROCESSING'):
+        # get num processors
+        n_procs = conf.get('Multiprocessing','processors')
+        if n_procs == 'Auto':
+            n_procs = multiprocessing.cpu_count() - 1
+        else:
+            n_procs = int(n_procs)
+        print 'Multiprocessing.  Number of processors = ', n_procs
         count = 0
         try:
             jobs = [None] * n_procs
@@ -338,7 +339,7 @@ def main():
                 #pdb.set_trace()
                 for i in range(n_procs):
                     count +=1
-                    p = multiprocessing.Process(target=worker, args=(record.next(), tags, reverse_mid, reverse_linkers))
+                    p = multiprocessing.Process(target=worker, args=(record.next(), qual, tags, reverse_mid, reverse_linkers))
                     jobs[i]=p
                     p.start()
             for j in jobs:
@@ -349,11 +350,12 @@ def main():
         except StopIteration:
             pass
     else:
+        print 'Not using multiprocessing'
         count = 0
         try:
             while count < 5000:
                 count +=1
-                worker(record.next(), tags, reverse_mid, reverse_linkers)
+                worker(record.next(), qual, tags, reverse_mid, reverse_linkers)
         except StopIteration:
             pass
     end_time = time.time()
