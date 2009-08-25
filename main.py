@@ -267,16 +267,14 @@ def createSeqTable(c):
 
 def worker(record, tags, reverse_mid, reverse_linkers):
     # we need a separate connection for each mysql cursor or they are going
-    # start getting into locking hell and things go poorly. This is the
-    # easiest solution.
+    # start going into locking hell and things will go poorly. This is the
+    # easiest/laziest solution.
     conn = MySQLdb.connect(user="python", passwd="BgDBYUTvmzA3", db="454_msatcommander")
     cur = conn.cursor()
-    #print os.getpid()
     # convert low-scoring bases to 'N'
     untrimmed_len = len(record.seq)
     qual_trimmed = qualTrimming(record, 10)
     N_count = str(qual_trimmed.seq).count('N')
-    #pdb.set_trace()
     # search on 5' (left) end for MID
     mid = midTrim(qual_trimmed, tags, fuzzy=True)
     #pdb.set_trace()
@@ -313,7 +311,7 @@ def main():
     # build tag library 1X
     tags = tagLibrary(mid, linkers, clust)
     # get multiprocessing
-    n_procs = conf.get('Nprocs','processors')
+    n_procs = conf.get('Multiprocessing','processors')
     if n_procs == 'Auto':
         n_procs = multiprocessing.cpu_count() - 1
     else:
