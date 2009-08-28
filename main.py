@@ -7,15 +7,7 @@ Created by Brant Faircloth on 2009-08-14.
 Copyright (c) 2009 Brant Faircloth. All rights reserved.
 """
 
-import re
-import os
-import pdb
-import time
-import numpy
-import string
-import MySQLdb
-import ConfigParser
-import multiprocessing
+import re, os, pdb, time, numpy, string, MySQLdb, ConfigParser, multiprocessing
 from Bio import Seq
 from Bio import pairwise2
 from Bio.SeqIO import QualityIO
