@@ -13,7 +13,6 @@ import pdb
 import time
 import numpy
 import string
-#import sqlite3
 import MySQLdb
 import ConfigParser
 import multiprocessing
@@ -21,7 +20,6 @@ from Bio import Seq
 from Bio import pairwise2
 from Bio.SeqIO import QualityIO
 from Bio.Alphabet import SingleLetterAlphabet
-
 
 def revComp(seq):
     bases = string.maketrans('AGCTagct','TCGAtcga')
@@ -44,6 +42,17 @@ def tagLibrary(mids, linkers, clust):
         else:
             tl[mids[m]][linkers[l]] = org
     return tl
+
+def allPossibleTags(mids, linkers, clust):
+    at = []
+    rat = []
+    for c in clust:
+        m,l = c[0].replace(' ','').split(',')
+        at.append(linkers[l])
+        rat.append(re.compile('%s' % linkers[l]))
+        at.append(revComp(linkers[l]))
+        rat.append(re.compile('%s' % revComp(linkers[l])))
+    return at, rat
             
 def trim(record, left=None, right=None):
     '''takes regular expression objects'''
@@ -68,12 +77,14 @@ def matches(tag, seq_match_span, tag_match_span, allowed_errors):
         seq_array, tag_array = numpy.array(list(seq_match_span)), numpy.array(list(tag_match_span))
         matches = sum(seq_array == tag_array)
         error = sum(seq_array != tag_array) + (len(tag) - len(tag_match_span.replace('-','')))
+        # Original scoring method from http://github.com/chapmanb/bcbb/tree/master treats gaps
+        # incorrectly:
         #return sum((1 if s == tag_match_span[i] else 0) for i, s in enumerate(seq_match_span))
         return matches, error
 
 def smithWaterman(seq, tags, allowed_errors):
     '''Borrowed & heavily modified from http://github.com/chapmanb/bcbb/tree/master'''
-    #if seq == 'ACGTCGTGCGGAGATGTGTATGGGATGTATGTAGGATGTGT':
+    #if seq == 'CGAGAGATACAAAAGCAGCAGCGGAATCGATTCCGCTGCTGC':
     #    pdb.set_trace()
     high_score = {'tag':None, 'seq_match':None, 'mid_match':None, 'score':None, 'start':None, 'end':None, 'matches':None, 'errors':allowed_errors}
     for tag in tags:
@@ -81,8 +92,6 @@ def smithWaterman(seq, tags, allowed_errors):
             tag, 5.0, -4.0, -9.0, -0.5, one_alignment_only=True)[0]
         seq_match_span, tag_match_span = seq_match[start:end], tag_match[start:end]
         match, errors = matches(tag, seq_match_span, tag_match_span, allowed_errors)
-        #if seq == 'ACGTCGTGCGGAGATGTGTATGGGATGTATGTAGGATGTGT':
-        #    print tag, tag_match_span, seq_match_span, match, errors
         if match >= len(tag)-allowed_errors and match > high_score['matches'] and errors <= high_score['errors']:
             high_score['tag'] = tag
             high_score['seq_match'] = seq_match
@@ -97,30 +106,6 @@ def smithWaterman(seq, tags, allowed_errors):
         return high_score['tag'], high_score['matches'], high_score['seq_match'], high_score['seq_match_span'], high_score['start'], high_score['end']
     else:
         return None
-
-def tagRegexer(seq, tags, left=True, right=False, both=False):
-    for tag in tags:
-        if left:
-            tag_re = re.compile(('^%s') % (tag))
-            tag_trim = re.search(tag_re, seq)
-            if tag_trim:
-                return tag, tag_trim
-        elif right:
-            tag_re = re.compile(('%s$') % (revComp(tag)))
-            tag_trim = re.search(tag_re, seq)
-            if tag_trim:
-                return tag, tag_trim
-        elif both:
-            left_tag_re = re.compile(('^%s') % (tag))
-            right_tag_re = re.compile(('%s$') % (revComp(tag)))
-            left_tag_trim = re.search(left_tag_re, seq)
-            right_tag_trim = re.search(right_tag_re, seq)
-            if left_tag_trim or right_tag_trim:
-                return tag, left_tag_trim, right_tag_trim
-    if left or right:
-        return None, None
-    else:
-        return None, None, None
 
 def qualTrimming(record, min_score=10):
     s = str(record.seq)
@@ -267,12 +252,40 @@ def createSeqTable(c):
         c.execute('''DROP TABLE sequence''')
     except:
         pass
-    c.execute('''CREATE TABLE sequence (id INT UNSIGNED NOT NULL AUTO_INCREMENT,name VARCHAR(100),mid VARCHAR(30),mid_seq VARCHAR(30),mid_match VARCHAR(30),mid_method VARCHAR(50),linker VARCHAR(30),linker_seq VARCHAR(30),linker_match VARCHAR(30),linker_method VARCHAR(50),cluster VARCHAR(50),n_count SMALLINT UNSIGNED,untrimmed_len SMALLINT UNSIGNED,PRIMARY KEY (id))''')
+    c.execute('''CREATE TABLE sequence (id INT UNSIGNED NOT NULL AUTO_INCREMENT,name VARCHAR(100),mid VARCHAR(30),mid_seq VARCHAR(30),mid_match VARCHAR(30),mid_method VARCHAR(50),linker VARCHAR(30),linker_seq VARCHAR(30),linker_match VARCHAR(30),linker_method VARCHAR(50),cluster VARCHAR(50),concat_seq VARCHAR(30), concat_match varchar(30), concat_method VARCHAR(50),n_count SMALLINT UNSIGNED,untrimmed_len SMALLINT UNSIGNED,PRIMARY KEY (id))''')
 
-def worker(record, qual, tags, reverse_mid, reverse_linkers):
+def concatCheck(record, all_tags, all_tags_regex, reverse_linkers, **kwargs):
+    s = str(record.seq)
+    m_type = None
+    # do either/or to try and keep speed up, somewhat
+    #if not kwargs['fuzzy']:
+    #pdb.set_trace()
+    for tag in all_tags_regex:
+        match = re.search(tag, s)
+        if match:
+            tag = tag.pattern
+            m_type = 'regex-concat'
+            seq_match = tag
+            break
+    if not match and ['fuzzy']:
+    #else:
+        match = smithWaterman(s, all_tags, 1)
+        # we can trim w/o regex
+        if match:
+            tag = match[0]
+            m_type = 'fuzzy-concat'
+            seq_match = match[3]
+    if m_type:
+        return tag, m_type, seq_match
+    else:
+        return None, None, None
+            
+def worker(record, qual, tags, all_tags, all_tags_regex, reverse_mid, reverse_linkers):
     # we need a separate connection for each mysql cursor or they are going
-    # start going into locking hell and things will go poorly. This is the
-    # easiest/laziest solution.
+    # start going into locking hell and things will go poorly. Creating a new 
+    # connection for each worker process is the easiest/laziest solution.
+    # Connection pooling (DB-API) didn't work so hot, but probably because 
+    #I'm slightly retarded.
     conn = MySQLdb.connect(user="python", passwd="BgDBYUTvmzA3", db="454_msatcommander")
     cur = conn.cursor()
     # convert low-scoring bases to 'N'
@@ -281,24 +294,36 @@ def worker(record, qual, tags, reverse_mid, reverse_linkers):
     N_count = str(qual_trimmed.seq).count('N')
     # search on 5' (left) end for MID
     mid = midTrim(qual_trimmed, tags, fuzzy=True)
-    #pdb.set_trace()
+    #TODO:  Add length parameters
     if mid:
         # if MID, search for exact matches (for and revcomp) on Linker
         # provided no exact matches, use fuzzy matching (Smith-Waterman) +
         # error correction to find Linker
         mid, trimmed, seq_match, m_type = mid
-        #pdb.set_trace()
+        #TODO:  Add length parameters
         linker = linkerTrim(trimmed, tags[mid], fuzzy=True)
         if linker:
             l_tag, l_trimmed, l_seq_match, l_critter, l_m_type = linker
-            concatenation = concatCheck(l_trimmed, tags)
         else:
-            l_tag, l_trimmed, l_seq_match, l_critter, l_m_type = (None,) * 5
+            l_tag, l_trimmed, l_seq_match, l_critter, l_m_type, concat_type, concat_count = (None,) * 7
     else:
         mid, trimmed, seq_match, m_type = (None,) * 4
-        l_tag, l_trimmed, l_seq_match, l_critter, l_m_type = (None,) * 5
+        l_tag, l_trimmed, l_seq_match, l_critter, l_m_type, concat_type, concat_count = (None,) * 7
+    # check for concatemers
+    #if record.id == 'MID15_NoError_SimpleX1_NoError_SimpleX1_CONCAT_bog_copper_1ee':
+    #    pdb.set_trace()
+    concat_check = True
+    if concat_check:
+        if l_trimmed and len(l_trimmed.seq) > 0:
+            concat_tag, concat_type, concat_seq_match = concatCheck(l_trimmed, all_tags, all_tags_regex, reverse_linkers, fuzzy=True)
+        else:
+            concat_tag, concat_type, concat_seq_match = None, None, None
+    else:
+        concat_tag, concat_type, concat_seq_match = None, None, None
+    #concat_type = None
     #pdb.set_trace()
-    cur.execute("INSERT INTO sequence (name, mid, mid_seq, mid_match, mid_method, linker, linker_seq, linker_match, linker_method, cluster, n_count, untrimmed_len) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (record.id, reverse_mid[mid], mid, seq_match, m_type, reverse_linkers[l_tag], l_tag, l_seq_match, l_m_type, l_critter, N_count, untrimmed_len,))
+    cur.execute("INSERT INTO sequence (name, mid, mid_seq, mid_match, mid_method, linker, linker_seq, linker_match, linker_method, cluster, concat_seq, concat_match, concat_method, n_count, untrimmed_len) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, %s)", (record.id, reverse_mid[mid], mid, seq_match, m_type, reverse_linkers[l_tag], l_tag, l_seq_match, l_m_type, l_critter, concat_tag, concat_seq_match, concat_type, N_count, untrimmed_len,))
+    cur.close()
     conn.commit()
     conn.close()
     return
@@ -310,17 +335,21 @@ def main():
     conf.read('mc454.conf')
     mid, reverse_mid = dict(conf.items('MID')), reverse(conf.items('MID'))
     linkers, reverse_linkers = dict(conf.items('Linker')), reverse(conf.items('Linker'))
+    pdb.set_trace()
     reverse_mid[None] = None
     reverse_linkers[None] = None
     clust = conf.items('Clusters')
     qual = conf.getint('Qual', 'MIN_SCORE')
     # build tag library 1X
     tags = tagLibrary(mid, linkers, clust)
+    all_tags, all_tags_regex = allPossibleTags(mid, linkers, clust)
     print 'Started: ', time.strftime("%a %b %d, %Y  %H:%M:%S", time.localtime(start_time))
     # crank out a new table for the data
     conn = MySQLdb.connect(user="python", passwd="BgDBYUTvmzA3", db="454_msatcommander")
     cur = conn.cursor()
     createSeqTable(cur)
+    cur.close()
+    conn.close()
     # for each sequence
     record = QualityIO.PairedFastaQualIterator(open(conf.get('Input','sequence'), "rU"), open(conf.get('Input','qual'), "rU"))
     #pdb.set_trace()
@@ -328,45 +357,41 @@ def main():
         # get num processors
         n_procs = conf.get('Multiprocessing','processors')
         if n_procs == 'Auto':
-            n_procs = multiprocessing.cpu_count() - 1
+            n_procs = (multiprocessing.cpu_count() - 1)*2
         else:
-            n_procs = int(n_procs)
+            n_procs = int(n_procs)*2
         print 'Multiprocessing.  Number of processors = ', n_procs
-        count = 0
+        #count = 0
         try:
             jobs = [None] * n_procs
-            while count < 5000:
+            #while count < 5000:
                 #pdb.set_trace()
+            while record:
                 for i in range(n_procs):
-                    count +=1
-                    p = multiprocessing.Process(target=worker, args=(record.next(), qual, tags, reverse_mid, reverse_linkers))
+                    #count +=1
+                    p = multiprocessing.Process(target=worker, args=(record.next(), qual, tags, all_tags, all_tags_regex, reverse_mid, reverse_linkers))
                     jobs[i]=p
                     p.start()
-            for j in jobs:
-                try:
-                    j.join()
-                except:
-                    pass
+                    #p.join()
+                for j in jobs:
+                    try:
+                        j.join()
+                    except:
+                        pass
         except StopIteration:
             pass
     else:
         print 'Not using multiprocessing'
         count = 0
         try:
-            while count < 5000:
+            while count < 1000:
                 count +=1
-                worker(record.next(), qual, tags, reverse_mid, reverse_linkers)
+                worker(record.next(), qual, tags, all_tags, all_tags_regex, reverse_mid, reverse_linkers)
         except StopIteration:
             pass
     end_time = time.time()
     print 'Ended: ', time.strftime("%a %b %d, %Y  %H:%M:%S", time.localtime(end_time))
     print '\nTime for execution: ', (end_time - start_time)/60, 'minutes'
-    # let the threads finish writing to the dbase.
-    #print "sleeping 10"
-    #time.sleep(5)
-    #for c in cursors:
-    #    c.close()
-    #db.close()
 
 if __name__ == '__main__':
     main()
