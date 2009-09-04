@@ -47,7 +47,6 @@ def allPossibleTags(mids, linkers, clust):
     return at, rat
             
 def trim(record, left=None, right=None):
-    '''takes regular expression objects'''
     if left and right:
         record = record[left:right]
     elif left:
@@ -62,9 +61,6 @@ def matches(tag, seq_match_span, tag_match_span, allowed_errors):
     if tag_match_span.count('-') > allowed_errors or seq_match_span.count('-')\
      > allowed_errors:
         return 0, 0
-    # we don't really want to penalize mismatches/gaps with -1, rather we
-    # just don't want to count them as matches (=0).  The case above should
-    # help with long extensions across gaps
     else:
         #pdb.set_trace()
         seq_array, tag_array = numpy.array(list(seq_match_span)), \
@@ -127,7 +123,7 @@ def midTrim(record, tags, max_gap_char=5, **kwargs):
     #if record.id == 'MID_No_Error_ATACGACGTA':
     #    pdb.set_trace()
     s = str(record.seq)
-    mid = leftLinker(s, tags, max_gap_char, fuzzy=kwargs['fuzzy'])
+    mid = leftLinker(s, tags, max_gap_char, True, fuzzy=kwargs['fuzzy'])
     if mid:
         trimmed = trim(record, mid[3])
         tag, m_type, seq_match = mid[0], mid[1], mid[4]
@@ -143,9 +139,12 @@ def SWMatchPos(seq_match_span, start, stop):
         stop = stop - seq_match_span.count('-')
     return start, stop
 
-def leftLinker(s, tags, max_gap_char, **kwargs):
+def leftLinker(s, tags, max_gap_char, gaps=False, **kwargs):
     for tag in tags:
-        r = re.compile(('^%s') % (tag))
+        if gaps:
+            r = re.compile(('^%s') % (tag))
+        else:
+            r = re.compile(('^[acgtnACGTN]{0,%s}%s') % (max_gap_char, tag))
         match = re.search(r, s)
         if match:
             m_type = 'regex'
@@ -173,7 +172,8 @@ def rightLinker(s, tags, max_gap_char, **kwargs):
     #    pdb.set_trace()
     revtags = revCompTags(tags)
     for tag in revtags:
-        r = re.compile(('%s$') % (tag))
+        #r = re.compile(('%s$') % (tag))
+        r = re.compile(('%s[acgtnACGTN]{0,%s}$') % (tag, max_gap_char))
         match = re.search(r, s)
         if match:
             m_type = 'regex'
@@ -252,10 +252,10 @@ def reverse(items):
 
 def createSeqTable(c):
     try:
-        c.execute('''DROP TABLE sequence''')
+        c.execute('''DROP TABLE sequence_test''')
     except:
         pass
-    c.execute('''CREATE TABLE sequence (id INT UNSIGNED NOT NULL 
+    c.execute('''CREATE TABLE sequence_test (id INT UNSIGNED NOT NULL 
         AUTO_INCREMENT,name VARCHAR(100),mid VARCHAR(30),mid_seq VARCHAR(30),
         mid_match VARCHAR(30),mid_method VARCHAR(50),linker VARCHAR(30),
         linker_seq VARCHAR(30),linker_match VARCHAR(30),linker_method 
@@ -322,7 +322,7 @@ def worker(record, qual, tags, all_tags, all_tags_regex, reverse_mid, reverse_li
         l_tag, l_trimmed, l_seq_match, l_critter, l_m_type, concat_type, \
         concat_count = (None,) * 7
     # check for concatemers
-    concat_check = True
+    concat_check = False
     if concat_check:
         if l_trimmed and len(l_trimmed.seq) > 0:
             concat_tag, concat_type, concat_seq_match = concatCheck(l_trimmed, 
@@ -331,7 +331,7 @@ def worker(record, qual, tags, all_tags, all_tags_regex, reverse_mid, reverse_li
             concat_tag, concat_type, concat_seq_match = None, None, None
     else:
         concat_tag, concat_type, concat_seq_match = None, None, None
-    cur.execute('''INSERT INTO sequence (name, mid, mid_seq, mid_match, 
+    cur.execute('''INSERT INTO sequence_test (name, mid, mid_seq, mid_match, 
         mid_method, linker, linker_seq, linker_match, linker_method, cluster, 
         concat_seq, concat_match, concat_method, n_count, untrimmed_len) 
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, %s)''', (record.id,
@@ -373,33 +373,46 @@ def main():
         if n_procs == 'Auto':
             # TODO:  change this?
             # we'll start 2X-1 threads (X = processors).
-            n_procs = (multiprocessing.cpu_count() - 1)*2
+            n_procs = multiprocessing.cpu_count()
         else:
-            n_procs = int(n_procs)*2
+            n_procs = int(n_procs)
         print 'Multiprocessing.  Number of processors = ', n_procs
         # to test with fewer sequences
-        #count = 0
+        count = 0
         try:
-            # TODO:  move this to more pool-based list of processes 
-            # (see example on intertubes)
-            jobs = [None] * n_procs
-            # to test with fewer sequences
-            #while count < 5000:
-            # to test with all sequences
-            while record:
-                for i in range(n_procs):
-                    # to test with fewer sequences
-                    #count +=1
+            threads = []
+            while count < 5000:
+                if len(threads) < n_procs:
+                    count += 1
                     p = multiprocessing.Process(target=worker, args=(
                     record.next(), qual, tags, all_tags, all_tags_regex, 
                     reverse_mid, reverse_linkers))
-                    jobs[i]=p
                     p.start()
-                for j in jobs:
-                    try:
-                        j.join()
-                    except:
-                        pass
+                    threads.append(p)
+                else:
+                    for t in threads:
+                        if not t.is_alive():
+                            threads.remove(t)
+            ## TODO:  move this to more pool-based list of processes 
+            ## (see example on intertubes)
+            ##jobs = [None] * n_procs
+            ## to test with fewer sequences
+            ##while count < 5000:
+            ## to test with all sequences
+            ##while record:
+            #    for i in range(n_procs):
+            #        # to test with fewer sequences
+            #        count +=1
+            #        p = multiprocessing.Process(target=worker, args=(
+            #        record.next(), qual, tags, all_tags, all_tags_regex, 
+            #        reverse_mid, reverse_linkers))
+            #        jobs[i]=p
+            #        p.start()
+            #    for j in jobs:
+            #        try:
+            #            j.join()
+            #        except:
+            #            pass
         except StopIteration:
             pass
     else:
