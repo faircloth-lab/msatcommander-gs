@@ -7,7 +7,7 @@ Created by Brant Faircloth on 2009-08-14.
 Copyright (c) 2009 Brant Faircloth. All rights reserved.
 """
 
-import re, os, pdb, time, numpy, string, MySQLdb, ConfigParser, multiprocessing
+import re, os, pdb, time, numpy, string, MySQLdb, ConfigParser, multiprocessing, cPickle
 from Bio import Seq
 from Bio import pairwise2
 from Bio.SeqIO import QualityIO
@@ -261,8 +261,9 @@ def createSeqTable(c):
         linker_seq VARCHAR(30),linker_match VARCHAR(30),linker_method 
         VARCHAR(50),cluster VARCHAR(50),concat_seq VARCHAR(30), 
         concat_match varchar(30), concat_method VARCHAR(50),
-        n_count SMALLINT UNSIGNED,untrimmed_len SMALLINT UNSIGNED,
-        PRIMARY KEY (id))''')
+        n_count SMALLINT UNSIGNED, untrimmed_len SMALLINT UNSIGNED, 
+        seq_trimmed TEXT, trimmed_len SMALLINT UNSIGNED, record BLOB, PRIMARY
+        KEY (id))''')
 
 def concatCheck(record, all_tags, all_tags_regex, reverse_linkers, **kwargs):
     s = str(record.seq)
@@ -331,15 +332,28 @@ def worker(record, qual, tags, all_tags, all_tags_regex, reverse_mid, reverse_li
             concat_tag, concat_type, concat_seq_match = None, None, None
     else:
         concat_tag, concat_type, concat_seq_match = None, None, None
+    # if we are able to trim the linker
+    if l_trimmed:
+        record = l_trimmed
+    # if we are able to trim the MID
+    elif trimmed:
+        record = trimmed
+    # pickle the sequence record, so we can store it as a BLOB in MySQL, we
+    # can thus recurrect it as a sequence object when we need it next.
+    record_pickle = cPickle.dumps(record,1)
     cur.execute('''INSERT INTO sequence_test (name, mid, mid_seq, mid_match, 
         mid_method, linker, linker_seq, linker_match, linker_method, cluster, 
-        concat_seq, concat_match, concat_method, n_count, untrimmed_len) 
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, %s)''', (record.id,
-        reverse_mid[mid], mid, seq_match, m_type, reverse_linkers[l_tag], 
-        l_tag, l_seq_match, l_m_type, l_critter, concat_tag, concat_seq_match, 
-        concat_type, N_count, untrimmed_len,))
+        concat_seq, concat_match, concat_method, n_count, untrimmed_len, 
+        seq_trimmed, trimmed_len, record) 
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''', 
+        (record.id, reverse_mid[mid], mid, seq_match, m_type, 
+        reverse_linkers[l_tag], l_tag, l_seq_match, l_m_type, l_critter, 
+        concat_tag, concat_seq_match, concat_type, N_count, untrimmed_len,
+        record.seq, len(record.seq), record_pickle))
+    #pdb.set_trace()
     cur.close()
     conn.commit()
+    # keep our connection load low
     conn.close()
     return
 
@@ -378,12 +392,14 @@ def main():
             n_procs = int(n_procs)
         print 'Multiprocessing.  Number of processors = ', n_procs
         # to test with fewer sequences
-        count = 0
+        #count = 0
         try:
             threads = []
-            while count < 5000:
+            # this is approximately 150% faster than the code below.
+            while record:
+            #while count < 5000:
                 if len(threads) < n_procs:
-                    count += 1
+                    #count += 1
                     p = multiprocessing.Process(target=worker, args=(
                     record.next(), qual, tags, all_tags, all_tags_regex, 
                     reverse_mid, reverse_linkers))
