@@ -205,7 +205,7 @@ def linkerTrim(record, tags, max_gap_char=5, **kwargs):
     right   = rightLinker(s, tags, max_gap_char=5, fuzzy=kwargs['fuzzy'])
     if left and right and left[0] == right[0]:
         # we can have lots of conditional matches here
-        if left[2] <= max_gap_char and right[2] => (len(s) - (len(right[0]) +\
+        if left[2] <= max_gap_char and right[2] >= (len(s) - (len(right[0]) +\
         max_gap_char)):
             trimmed = trim(record, left[3], right[2])
             # left and right are identical so largely pass back the left
@@ -216,7 +216,7 @@ def linkerTrim(record, tags, max_gap_char=5, **kwargs):
             pass
     elif left and right and left[0] != right[0]:
         # flag
-        if left[2] <= max_gap_char and right[2] => (len(s) - (len(right[0]) +\
+        if left[2] <= max_gap_char and right[2] >= (len(s) - (len(right[0]) +\
         max_gap_char)):
             trimmed = None
             tag, m_type, seq_match = None, 'tag-mismatch', None
@@ -228,7 +228,7 @@ def linkerTrim(record, tags, max_gap_char=5, **kwargs):
             # flag
             pass
     elif right:
-        if right[2] => (len(s) - (len(right[0]) + max_gap_char)):
+        if right[2] >= (len(s) - (len(right[0]) + max_gap_char)):
             trimmed = trim(record, None, right[2])
             tag, m_type, seq_match = right[0], right[1]+'-right', right[4]
         else:
