@@ -74,8 +74,8 @@ def pslScore(psl, sizeMul = 1):
     return psl
 
 def parse_blat(cur, pkey, blat_result, seq_name, seq_seq):
-    # score of 40 roughyly approximates e_score ~ 1e-10
-    # score of 45 roughyly approximates e_score ~ 1e-15
+    # score of 40 roughly approximates e_score ~ 1e-10
+    # score of 45 roughly approximates e_score ~ 1e-15
     # score of 50 roughly approximates e_score ~ 1e-20
     #pdb.set_trace()
     score = 40
