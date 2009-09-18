@@ -17,15 +17,13 @@ from math import log
 
 def db_write(cur, db_row):
     cur.execute('''INSERT INTO blat (id, q_name, t_name, strand, percent, 
-    score, matches, mismatches, rep_match, ns, q_num_insert, q_gap_bases, 
-    t_num_insert, t_gap_bases, q_size, q_start, q_end, t_size, t_start, 
-    t_end) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''', 
+    length, mismatches, q_gaps, q_size, q_start, q_end, t_size, t_start, 
+    t_end, e_score, bit_score) 
+    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''', 
     (db_row['pkey'], db_row['qName'], db_row['tName'], db_row['strand'], 
-    db_row['percent'], db_row['score'], db_row['match'], db_row['misMatch'], 
-    db_row['repMatch'], db_row['Ns'], db_row['qNumInsert'], 
-    db_row['qGapBases'], db_row['tNumInsert'], db_row['tGapBases'], 
+    db_row['percent'], db_row['length'], db_row['misMatch'], db_row['qGaps'], 
     db_row['qSize'], db_row['qStart'], db_row['qEnd'], db_row['tSize'], 
-    db_row['tStart'], db_row['tEnd']))
+    db_row['tStart'], db_row['tEnd'], db_row['eScore'], db_row['bitScore']))
     # go ahead and commit since there will be very, very many writes
     #cur.commit()
 
@@ -73,32 +71,42 @@ def pslScore(psl, sizeMul = 1):
     psl['score'] = score
     return psl
 
+
 def parse_blat(cur, pkey, blat_result, seq_name, seq_seq):
-    # score of 40 roughly approximates e_score ~ 1e-10
-    # score of 45 roughly approximates e_score ~ 1e-15
-    # score of 50 roughly approximates e_score ~ 1e-20
-    #pdb.set_trace()
-    score = 40
-    fieldnames = ['match', 'misMatch', 'repMatch', 'Ns', 'qNumInsert', 'qGapBases', 'tNumInsert', 'tGapBases', 'strand', 'qName', 'qSize', 'qStart', 'qEnd', 'tName', 'tSize', 'tStart', 'tEnd', 'blockCount', 'blockSizes','qStarts', 'tStarts']
+    percent = 90.0
+    length = 25
+    e_score = 1e-10
+    fieldnames = ['qName','tName', 'percent', 'length', 'misMatch', 'qGaps', 'qStart', 'qEnd', 'tStart', 'tEnd', 'eScore', 'bitScore']
     match_count = 0
     self_match = False
+    unique_matches = []
     for row in blat_result:
         row = row.split()
         # merge fieldnames with row data
         db_row = dict(zip(fieldnames, row))
         # covert strings to ints
-        for f in ['match', 'misMatch', 'repMatch', 'Ns', 'qNumInsert', 'qGapBases', 'tNumInsert', 'tGapBases', 'qSize', 'qStart', 'qEnd', 'tSize', 'tStart', 'tEnd']:
+        for f in ['length', 'misMatch', 'qGaps', 'qStart', 'qEnd', 'tStart', 'tEnd',]:
             db_row[f] = int(db_row[f])
-        # compute score
-        db_row = pslScore(db_row)
-        # compute percent id
-        db_row = pslPercentId(db_row)
+        for f in ['percent', 'eScore', 'bitScore']:
+            db_row[f] = float(db_row[f])
+        # determine strand
+        if db_row['tStart'] > db_row['tEnd']:
+            db_row['tStart'], db_row['tEnd'] = db_row['tEnd'], db_row['tStart']
+            db_row['strand'] = '-'
+        else:
+            db_row['strand'] = '+'
+        # fix/add some other metrics
+        db_row['percent'] = round(db_row['percent'],1)
+        db_row['qSize'] = db_row['qEnd'] - db_row['qStart']
+        db_row['tSize'] = db_row['tEnd'] - db_row['tStart']
         # if this is NOT a self-match
-        if not (db_row['qName'] == db_row['tName']) and db_row['score'] >= score:
+        if not (db_row['qName'] == db_row['tName']) and db_row['percent'] >= percent and db_row['length'] >= length and db_row['eScore'] <= e_score:
             # update the dependent table
             db_row['pkey'] = pkey
             db_write(cur, db_row)
-            match_count += 1
+            if db_row['tName'] not in unique_matches:
+                unique_matches.append(db_row['tName'])
+                match_count += 1
         elif (db_row['qName'] == db_row['tName']):
             # self match
             pass
@@ -112,7 +120,7 @@ def worker(tb, pkey, name, seq_trimmed):
         cur = conn.cursor()
         sequence = ('>%s\n%s\n' % (name, seq_trimmed))
         #pdb.set_trace()
-        blat_result, blat_error = subprocess.Popen('/Users/bcf/bin/i386/blat %s stdin -mask=lower -out=psl -noHead stdout' % tb, shell=True, stdin = subprocess.PIPE, stdout = subprocess.PIPE, stderr=subprocess.PIPE).communicate(input=sequence)
+        blat_result, blat_error = subprocess.Popen('/Users/bcf/bin/i386/blat %s stdin -mask=lower -out=blast8 -noHead stdout' % tb, shell=True, stdin = subprocess.PIPE, stdout = subprocess.PIPE, stderr=subprocess.PIPE).communicate(input=sequence)
         if blat_error:
             pdb.set_trace()
         if blat_result and not blat_error:
@@ -140,13 +148,11 @@ def createBlatTable(cur):
         pass
     cur.execute('''CREATE TABLE blat (id INT UNSIGNED NOT NULL, q_name 
         VARCHAR(100), t_name VARCHAR(100), strand VARCHAR(1), percent 
-        DECIMAL(4,1), score DECIMAL(4,1), matches SMALLINT UNSIGNED, mismatches 
-        SMALLINT UNSIGNED, rep_match SMALLINT UNSIGNED, ns SMALLINT UNSIGNED, 
-        q_num_insert SMALLINT UNSIGNED, q_gap_bases SMALLINT UNSIGNED, 
-        t_num_insert SMALLINT UNSIGNED, t_gap_bases SMALLINT UNSIGNED, q_size 
-        SMALLINT UNSIGNED, q_start SMALLINT UNSIGNED, q_end SMALLINT 
-        UNSIGNED, t_size SMALLINT UNSIGNED, t_start SMALLINT UNSIGNED, t_end 
-        SMALLINT UNSIGNED, INDEX blat_id (id))''')
+        DECIMAL(4,1), length SMALLINT unsigned, mismatches SMALLINT UNSIGNED, 
+        q_gaps SMALLINT UNSIGNED, q_size SMALLINT UNSIGNED, q_start SMALLINT 
+        UNSIGNED, q_end SMALLINT UNSIGNED, t_size SMALLINT UNSIGNED, t_start 
+        SMALLINT UNSIGNED, t_end SMALLINT UNSIGNED, e_score FLOAT, bit_score 
+        FLOAT, INDEX blat_id (id), INDEX blat_q_name (q_name))''')
         
 def updateSequenceTable(cur):
     #pdb.set_trace()
@@ -170,6 +176,17 @@ def main():
     print 'Started: ', time.strftime("%a %b %d, %Y  %H:%M:%S", time.localtime(start_time))
     conf = ConfigParser.ConfigParser()
     conf.read('mc454.conf')
+    if conf.getboolean('Multiprocessing', 'MULTIPROCESSING'):
+        # get num processors
+        n_procs = conf.get('Multiprocessing','processors')
+        if n_procs == 'Auto':
+            n_procs = multiprocessing.cpu_count() - 1
+        else:
+            n_procs = int(n_procs)
+        print 'Multiprocessing.  Number of processors = ', n_procs
+    else:
+        n_procs = 1
+        print 'Not using multiprocessing. Number of processors = ', n_procs
     # create a table for the output
     conn = MySQLdb.connect(user="python", passwd="BgDBYUTvmzA3", 
     db="454_msatcommander")
@@ -192,24 +209,20 @@ def main():
             for s in sequences:
                 tf_handle.write(fasta(s[1],s[2]))
             tf_handle.close()
+            print "Masking low complexity regions in:\t%s" % tf[1]
+            if n_procs > 1:
+                lc_masker_out, lc_masker_err = subprocess.Popen('/Users/bcf/bin/RepeatMasker/repeatmasker -qq -noint -xsmall -pa 7 %s' % tf[1], shell=True, stdout=subprocess.PIPE, stderr = subprocess.PIPE).communicate()
+            else:
+                lc_masker_out, lc_masker_err = subprocess.Popen('/Users/bcf/bin/RepeatMasker/repeatmasker -qq -noint -xsmall %s' % tf[1], shell=True, stdout=subprocess.PIPE, stderr = subprocess.PIPE).communicate()
             # for each cluster generate the 2bit file for blat
+            masked_tf = tf[1] + '.masked'
             tb = tf[1] + '.2bit'
-            #tb_handle = open(tb,'w')
-            print "Building %s twobit file" % c
-            #two_bit = subprocess.Popen('/Users/bcf/bin/i386/faToTwoBit %s stdout' % tf[1], shell=True, stdout=tb_handle, stderr = subprocess.PIPE).communicate()
-            two_bit = subprocess.Popen('/Users/bcf/bin/i386/faToTwoBit %s %s' % (tf[1], tb), shell=True, stderr = subprocess.PIPE).communicate()
-            #tb_handle.close()
+            print "Building twobit file from:\t\t%s" % masked_tf
+            two_bit = subprocess.Popen('/Users/bcf/bin/i386/faToTwoBit %s %s' % (masked_tf, tb), shell=True, stderr = subprocess.PIPE).communicate()
             # get only msat-containing sequences
             cur.execute('''SELECT id, name, seq_trimmed FROM sequence_test WHERE cluster = %s and msat = 1''', (c,))
             sequences = cur.fetchall()
-            if conf.getboolean('Multiprocessing', 'MULTIPROCESSING'):
-                # get num processors
-                n_procs = conf.get('Multiprocessing','processors')
-                if n_procs == 'Auto':
-                    n_procs = multiprocessing.cpu_count() - 1
-                else:
-                    n_procs = int(n_procs)
-                print 'Multiprocessing.  Number of processors = ', n_procs
+            if n_procs > 1:
                 threads = []
                 index = 0
                 while index < len(sequences):
@@ -231,7 +244,6 @@ def main():
                         if not t.is_alive():
                             threads.remove(t)
             else:
-                print 'Not using multiprocessing'
                 index = 0
                 #while index < len(sequences):
                 while index < 50:
