@@ -146,6 +146,7 @@ def createBlatTable(cur):
         cur.execute('''DROP TABLE blat''')
     except:
         pass
+        # TODO:  if using pooled column, add that bastard here to save time
     cur.execute('''CREATE TABLE blat (id INT UNSIGNED NOT NULL, q_name 
         VARCHAR(100), t_name VARCHAR(100), strand VARCHAR(1), percent 
         DECIMAL(4,1), length SMALLINT unsigned, mismatches SMALLINT UNSIGNED, 
@@ -193,6 +194,9 @@ def main():
     cur = conn.cursor()
     createBlatTable(cur)
     updateSequenceTable(cur)
+    conn.commit()
+    cur.close()
+    conn.close()
     # get clusters from conf file
     cluster = [c[1] for c in conf.items('Clusters')]
     # create a temp directory for results
@@ -207,6 +211,7 @@ def main():
             tf = tempfile.mkstemp(prefix='clean-%s-' % c, suffix='.fa', dir=tdir)
             tf_handle = open(tf[1], 'w')
             for s in sequences:
+                # TODO:  switch over to id only for fasta to reduce MySQL index overhead.
                 tf_handle.write(fasta(s[1],s[2]))
             tf_handle.close()
             print "Masking low complexity regions in:\t%s" % tf[1]

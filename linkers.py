@@ -251,6 +251,8 @@ def reverse(items):
     return dict(l)
 
 def createSeqTable(c):
+    # TODO:  move blob column to its own table, indexed by id
+    # TODO:  move all tables to InnoDB??
     try:
         c.execute('''DROP TABLE sequence_test''')
     except:
@@ -263,7 +265,7 @@ def createSeqTable(c):
         concat_match varchar(30), concat_method VARCHAR(50),
         n_count SMALLINT UNSIGNED, untrimmed_len SMALLINT UNSIGNED, 
         seq_trimmed TEXT, trimmed_len SMALLINT UNSIGNED, record BLOB, PRIMARY
-        KEY (id))''')
+        KEY (id), INDEX sequence_test_cluster (cluster))''')
 
 def concatCheck(record, all_tags, all_tags_regex, reverse_linkers, **kwargs):
     s = str(record.seq)
@@ -376,6 +378,7 @@ def main():
     conn = MySQLdb.connect(user="python", passwd="BgDBYUTvmzA3", db="454_msatcommander")
     cur = conn.cursor()
     createSeqTable(cur)
+    conn.commit()
     cur.close()
     conn.close()
     record = QualityIO.PairedFastaQualIterator(

@@ -115,6 +115,7 @@ def createMaskTable(cur):
         cur.execute('''DROP TABLE mask''')
     except:
         pass
+    # TODO:  Switch index to reference sequence.id versus autoincrement value and create an index on it
     cur.execute('''CREATE TABLE mask (id INT UNSIGNED NOT NULL 
             AUTO_INCREMENT, name VARCHAR(100), motif VARCHAR(8), start 
             SMALLINT UNSIGNED, end SMALLINT UNSIGNED, preceding SMALLINT 
@@ -140,6 +141,7 @@ def main():
     db="454_msatcommander")
     cur = conn.cursor()
     createMaskTable(cur)
+    conn.commit()
     cur.execute('''SELECT id, record FROM sequence_test WHERE n_count <= 2 AND
     trimmed_len > 10''')
     # pdb.set_trace()
