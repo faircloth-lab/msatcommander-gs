@@ -7,7 +7,7 @@ Created by Brant Faircloth on 2009-08-14.
 Copyright (c) 2009 Brant Faircloth. All rights reserved.
 """
 
-import os, sys, re, pdb, time, numpy, string, MySQLdb, ConfigParser, multiprocessing, cPickle, optparse
+import os, sys, re, pdb, time, numpy, string, MySQLdb, ConfigParser, multiprocessing, cPickle, optparse, progress
 from Bio import Seq
 from Bio import pairwise2
 from Bio.SeqIO import QualityIO
@@ -444,7 +444,6 @@ def main():
     start_time = time.time()
     options, arg = interface()
     motd()
-    pdb.set_trace()
     print 'Started: ', time.strftime("%a %b %d, %Y  %H:%M:%S", time.localtime(start_time))
     conf = ConfigParser.ConfigParser()
     conf.read(options.conf)

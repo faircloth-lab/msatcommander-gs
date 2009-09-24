@@ -170,7 +170,6 @@ def main():
     start_time = time.time()
     options, arg = interface()
     motd()
-    pdb.set_trace()
     print 'Started: ', time.strftime("%a %b %d, %Y  %H:%M:%S", time.localtime(start_time))
     conf = ConfigParser.ConfigParser()
     conf.read(options.conf)
