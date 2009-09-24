@@ -11,7 +11,7 @@ Takes fasta file as input, and screens content against genomic data
 a SQLite dbase.
 
 """
-import sys, pdb, time, MySQLdb, subprocess, ConfigParser, tempfile, cPickle, multiprocessing, textwrap
+import os, sys, pdb, time, MySQLdb, subprocess, ConfigParser, tempfile, cPickle, multiprocessing, textwrap, optparse
 from math import log
 #from Bio import SeqIO
 
@@ -172,11 +172,47 @@ def updateSequenceTable(cur):
 def fasta(name, seq):
     return '>%s\n%s\n' % (name, seq)
 
+def motd():
+    motd = '''
+    ##############################################################
+    #                     msatcommander 454                      #
+    #                                                            #
+    # - parsing and error correction for sequence tagged primers #
+    # - microsatellite identification                            #
+    # - sequence pooling                                         #
+    # - primer design                                            #
+    #                                                            #
+    # Copyright (c) 2009 Brant C. Faircloth & Travis C. Glenn    #
+    ##############################################################\n
+    '''
+    print motd
+
+def interface():
+    usage = "usage: %prog [options]"
+
+    p = optparse.OptionParser(usage)
+
+    p.add_option('--configuration', '-c', dest = 'conf', action='store', \
+type='string', default = None, help='The path to the configuration file.', \
+metavar='FILE')
+
+    (options,arg) = p.parse_args()
+    if not options.conf:
+        p.print_help()
+        sys.exit(2)
+    if not os.path.isfile(options.conf):
+        print "You must provide a valid path to the configuration file."
+        p.print_help()
+        sys.exit(2)
+    return options, arg
+
 def main():
     start_time = time.time()
+    options, arg = interface()
+    motd()
     print 'Started: ', time.strftime("%a %b %d, %Y  %H:%M:%S", time.localtime(start_time))
     conf = ConfigParser.ConfigParser()
-    conf.read('mc454.conf')
+    conf.read(options.conf)
     if conf.getboolean('Multiprocessing', 'MULTIPROCESSING'):
         # get num processors
         n_procs = conf.get('Multiprocessing','processors')
