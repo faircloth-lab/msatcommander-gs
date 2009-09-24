@@ -7,7 +7,7 @@ Created by Brant Faircloth on 2009-08-14.
 Copyright (c) 2009 Brant Faircloth. All rights reserved.
 """
 
-import re, os, pdb, time, numpy, string, MySQLdb, ConfigParser, multiprocessing, cPickle
+import os, sys, re, pdb, time, numpy, string, MySQLdb, ConfigParser, multiprocessing, cPickle, optparse
 from Bio import Seq
 from Bio import pairwise2
 from Bio.SeqIO import QualityIO
@@ -40,6 +40,7 @@ def allPossibleTags(mids, linkers, clust):
     rat = []
     for c in clust:
         m,l = c[0].replace(' ','').split(',')
+        # at = all tags; rat = reverse all tags
         at.append(linkers[l])
         rat.append(re.compile('%s' % linkers[l]))
         at.append(revComp(linkers[l]))
@@ -265,7 +266,19 @@ def createSeqTable(c):
         concat_match varchar(30), concat_method VARCHAR(50),
         n_count SMALLINT UNSIGNED, untrimmed_len SMALLINT UNSIGNED, 
         seq_trimmed TEXT, trimmed_len SMALLINT UNSIGNED, record BLOB, PRIMARY
-        KEY (id), INDEX sequence_test_cluster (cluster))''')
+        KEY (id), INDEX sequence_test_cluster (cluster)) ENGINE=InnoDB''')
+
+def createQualSeqTable(c):
+    # TODO:  move blob column to its own table, indexed by id
+    # TODO:  move all tables to InnoDB??
+    try:
+        c.execute('''DROP TABLE sequence''')
+    except:
+        pass
+    c.execute('''CREATE TABLE sequence (id INT UNSIGNED NOT NULL 
+        AUTO_INCREMENT,name VARCHAR(100), n_count SMALLINT UNSIGNED, 
+        untrimmed_len SMALLINT UNSIGNED, seq_trimmed TEXT, trimmed_len 
+        SMALLINT UNSIGNED, record BLOB, PRIMARY KEY (id)) ENGINE=InnoDB''')
 
 def concatCheck(record, all_tags, all_tags_regex, reverse_linkers, **kwargs):
     s = str(record.seq)
@@ -292,15 +305,48 @@ def concatCheck(record, all_tags, all_tags_regex, reverse_linkers, **kwargs):
         return tag, m_type, seq_match
     else:
         return None, None, None
+
+def sequenceCount(input):
+    handle = open(input, 'rU')
+    lines = handle.read().count('>')
+    handle.close()
+    return lines
             
-def worker(record, qual, tags, all_tags, all_tags_regex, reverse_mid, reverse_linkers):
+
+def qualOnlyWorker(record, qual, conf):
+    conn = MySQLdb.connect(user=conf.get('Database','USER'), 
+        passwd=conf.get('Database','PASSWORD'), 
+        db=conf.get('Database','DATABASE'))
+    cur = conn.cursor()
+    # convert low-scoring bases to 'N'
+    untrimmed_len = len(record.seq)
+    qual_trimmed = qualTrimming(record, qual)
+    N_count = str(qual_trimmed.seq).count('N')
+    record = qual_trimmed
+    # pickle the sequence record, so we can store it as a BLOB in MySQL, we
+    # can thus recurrect it as a sequence object when we need it next.
+    record_pickle = cPickle.dumps(record,1)
+    cur.execute('''INSERT INTO sequence (name, n_count, untrimmed_len, 
+        seq_trimmed, trimmed_len, record) 
+        VALUES (%s,%s,%s,%s,%s,%s)''', 
+        (record.id, N_count, untrimmed_len, record.seq, len(record.seq), 
+        record_pickle))
+    #pdb.set_trace()
+    cur.close()
+    conn.commit()
+    # keep our connection load low
+    conn.close()
+    return
+
+def linkerWorker(record, qual, tags, all_tags, all_tags_regex, reverse_mid, reverse_linkers, conf):
     # we need a separate connection for each mysql cursor or they are going
     # start going into locking hell and things will go poorly. Creating a new 
     # connection for each worker process is the easiest/laziest solution.
     # Connection pooling (DB-API) didn't work so hot, but probably because 
     #I'm slightly retarded.
-    conn = MySQLdb.connect(user="python", passwd="BgDBYUTvmzA3", 
-    db="454_msatcommander")
+    conn = MySQLdb.connect(user=conf.get('Database','USER'), 
+        passwd=conf.get('Database','PASSWORD'), 
+        db=conf.get('Database','DATABASE'))
     cur = conn.cursor()
     # convert low-scoring bases to 'N'
     untrimmed_len = len(record.seq)
@@ -360,27 +406,71 @@ def worker(record, qual, tags, all_tags, all_tags_regex, reverse_mid, reverse_li
     conn.close()
     return
 
+def motd():
+    motd = '''
+    ##############################################################
+    #                     msatcommander 454                      #
+    #                                                            #
+    # - parsing and error correction for sequence tagged primers #
+    # - microsatellite identification                            #
+    # - sequence pooling                                         #
+    # - primer design                                            #
+    #                                                            #
+    # Copyright (c) 2009 Brant C. Faircloth & Travis C. Glenn    #
+    ##############################################################\n
+    '''
+    print motd
+
+def interface():
+    usage = "usage: %prog [options]"
+
+    p = optparse.OptionParser(usage)
+
+    p.add_option('--configuration', '-c', dest = 'conf', action='store', \
+type='string', default = None, help='The path to the configuration file.', \
+metavar='FILE')
+
+    (options,arg) = p.parse_args()
+    if not options.conf:
+        p.print_help()
+        sys.exit(2)
+    if not os.path.isfile(options.conf):
+        print "You must provide a valid path to the configuration file."
+        p.print_help()
+        sys.exit(2)
+    return options, arg
+
 def main():
     start_time = time.time()
-    conf = ConfigParser.ConfigParser()
-    conf.read('mc454.conf')
-    mid, reverse_mid = dict(conf.items('MID')), reverse(conf.items('MID'))
-    linkers, reverse_linkers = dict(conf.items('Linker')), reverse(conf.items('Linker'))
-    reverse_mid[None] = None
-    reverse_linkers[None] = None
-    clust = conf.items('Clusters')
-    qual = conf.getint('Qual', 'MIN_SCORE')
-    # build tag library 1X
-    tags = tagLibrary(mid, linkers, clust)
-    all_tags, all_tags_regex = allPossibleTags(mid, linkers, clust)
+    options, arg = interface()
+    motd()
+    pdb.set_trace()
     print 'Started: ', time.strftime("%a %b %d, %Y  %H:%M:%S", time.localtime(start_time))
-    # crank out a new table for the data
-    conn = MySQLdb.connect(user="python", passwd="BgDBYUTvmzA3", db="454_msatcommander")
+    conf = ConfigParser.ConfigParser()
+    conf.read(options.conf)
+    conn = MySQLdb.connect(user=conf.get('Database','USER'), 
+        passwd=conf.get('Database','PASSWORD'), 
+        db=conf.get('Database','DATABASE'))
     cur = conn.cursor()
-    createSeqTable(cur)
-    conn.commit()
-    cur.close()
-    conn.close()
+    qualTrim = conf.getboolean('Steps', 'TRIM')
+    qual = conf.getint('Qual', 'MIN_SCORE')
+    linkerTrim = conf.getboolean('Steps', 'LINKERTRIM')
+    if qualTrim and not linkerTrim:
+        createQualSeqTable(cur)
+        conn.commit()
+    elif qualTrim and linkerTrim:
+        mid, reverse_mid = dict(conf.items('MID')), reverse(conf.items('MID'))
+        linkers, reverse_linkers = dict(conf.items('Linker')), reverse(conf.items('Linker'))
+        reverse_mid[None] = None
+        reverse_linkers[None] = None
+        clust = conf.items('Clusters')
+        # build tag library 1X
+        tags = tagLibrary(mid, linkers, clust)
+        all_tags, all_tags_regex = allPossibleTags(mid, linkers, clust)
+        # crank out a new table for the data
+        createSeqTable(cur)
+        conn.commit()
+    seqcount = sequenceCount(conf.get('Input','sequence'))
     record = QualityIO.PairedFastaQualIterator(
     open(conf.get('Input','sequence'), "rU"), 
     open(conf.get('Input','qual'), "rU"))
@@ -399,53 +489,54 @@ def main():
         #count = 0
         try:
             threads = []
-            # this is approximately 150% faster than the code below.
+            pb = progress.bar(0,seqcount,60)
+            pb_inc = 0
             while record:
-            #while count < 5000:
                 if len(threads) < n_procs:
-                    #count += 1
-                    p = multiprocessing.Process(target=worker, args=(
-                    record.next(), qual, tags, all_tags, all_tags_regex, 
-                    reverse_mid, reverse_linkers))
+                    if qualTrim and not linkerTrim:
+                        p = multiprocessing.Process(target=qualOnlyWorker, args=(
+                        record.next(), qual, conf))
+                    elif qualTrim and linkerTrim:
+                        p = multiprocessing.Process(target=linkerWorker, args=(
+                        record.next(), qual, tags, all_tags, all_tags_regex, 
+                        reverse_mid, reverse_linkers, conf))
                     p.start()
                     threads.append(p)
+                    if (pb_inc+1)%1000 == 0:
+                        pb.__call__(pb_inc+1)
+                    elif pb_inc + 1 == seqcount:
+                        pb.__call__(pb_inc+1)
+                    pb_inc += 1
                 else:
                     for t in threads:
                         if not t.is_alive():
                             threads.remove(t)
-            ## TODO:  move this to more pool-based list of processes 
-            ## (see example on intertubes)
-            ##jobs = [None] * n_procs
-            ## to test with fewer sequences
-            ##while count < 5000:
-            ## to test with all sequences
-            ##while record:
-            #    for i in range(n_procs):
-            #        # to test with fewer sequences
-            #        count +=1
-            #        p = multiprocessing.Process(target=worker, args=(
-            #        record.next(), qual, tags, all_tags, all_tags_regex, 
-            #        reverse_mid, reverse_linkers))
-            #        jobs[i]=p
-            #        p.start()
-            #    for j in jobs:
-            #        try:
-            #            j.join()
-            #        except:
-            #            pass
         except StopIteration:
             pass
     else:
         print 'Not using multiprocessing'
-        #count = 0
+        count = 0
         try:
+            pb = progress.bar(0,seqcount,60)
+            pb_inc = 0
             #while count < 1000:
             while record:
                 #count +=1
-                worker(record.next(), qual, tags, all_tags, all_tags_regex, 
-                reverse_mid, reverse_linkers)
+                if qualTrim and not linkerTrim:
+                    qualOnlyWorker(record.next(), qual, conf)
+                elif qualTrim and linkerTrim:
+                    linkerWorker(record.next(), qual, tags, all_tags, 
+                    all_tags_regex, reverse_mid, reverse_linkers, conf)
+                if (pb_inc+1)%1000 == 0:
+                    pb.__call__(pb_inc+1)
+                elif pb_inc + 1 == seqcount:
+                    pb.__call__(pb_inc+1)
+                pb_inc += 1
         except StopIteration:
             pass
+    print '\n'
+    cur.close()
+    conn.close()
     end_time = time.time()
     print 'Ended: ', time.strftime("%a %b %d, %Y  %H:%M:%S", time.localtime(end_time))
     print '\nTime for execution: ', (end_time - start_time)/60, 'minutes'
