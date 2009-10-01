@@ -119,8 +119,8 @@ def createMaskTable(cur):
     # TODO:  Switch index to reference sequence.id versus autoincrement value and create an index on it
     cur.execute('''CREATE TABLE mask (id INT UNSIGNED NOT NULL, 
             name VARCHAR(100), motif VARCHAR(8), start 
-            SMALLINT UNSIGNED, end SMALLINT UNSIGNED, preceding SMALLINT 
-            UNSIGNED, following SMALLINT UNSIGNED, motif_count SMALLINT 
+            MEDIUMINT UNSIGNED, end MEDIUMINT UNSIGNED, preceding MEDIUMINT 
+            UNSIGNED, following MEDIUMINT UNSIGNED, motif_count SMALLINT 
             UNSIGNED, FOREIGN KEY (id) REFERENCES sequence (id), INDEX 
             mask_name (name)) ENGINE=InnoDB''')
 
