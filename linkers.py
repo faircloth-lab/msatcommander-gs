@@ -277,8 +277,8 @@ def createQualSeqTable(c):
         pass
     c.execute('''CREATE TABLE sequence (id INT UNSIGNED NOT NULL 
         AUTO_INCREMENT,name VARCHAR(100), n_count SMALLINT UNSIGNED, 
-        untrimmed_len SMALLINT UNSIGNED, seq_trimmed TEXT, trimmed_len 
-        SMALLINT UNSIGNED, record BLOB, PRIMARY KEY (id)) ENGINE=InnoDB''')
+        untrimmed_len MEDIUMINT UNSIGNED, seq_trimmed MEDIUMTEXT, trimmed_len 
+        MEDIUMINT UNSIGNED, record MEDIUMBLOB, PRIMARY KEY (id)) ENGINE=InnoDB''')
 
 def concatCheck(record, all_tags, all_tags_regex, reverse_linkers, **kwargs):
     s = str(record.seq)
@@ -542,4 +542,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
