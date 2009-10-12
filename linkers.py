@@ -14,17 +14,21 @@ from Bio.SeqIO import QualityIO
 from Bio.Alphabet import SingleLetterAlphabet
 
 def revComp(seq):
+    '''Return reverse complement of seq'''
     bases = string.maketrans('AGCTagct','TCGAtcga')
     # translate it, reverse, return
     return seq.translate(bases)[::-1]
 
 def revCompTags(tags):
+    '''Return the reverse complements of a tag dictionary'''
     revTags = {}
     for tag in tags:
         revTags[revComp(tag)] = tags[tag]
     return revTags
 
 def tagLibrary(mids, linkers, clust):
+    '''Create a tag-library from the mids and the linkers which allows us to 
+    track which organisms go with which MID+linker combo'''
     tl = {}
     for c in clust:
         m,l = c[0].replace(' ','').split(',')
@@ -48,6 +52,7 @@ def allPossibleTags(mids, linkers, clust):
     return at, rat
             
 def trim(record, left=None, right=None):
+    '''Trim a given sequence given left and right offsets'''
     if left and right:
         record = record[left:right]
     elif left:
@@ -57,6 +62,7 @@ def trim(record, left=None, right=None):
     return record
 
 def matches(tag, seq_match_span, tag_match_span, allowed_errors):
+    '''Determine the gap/error counts for a particular match'''
     # deal with case where tag match might be perfect, but extremely gappy, 
     #e.g. ACGTCGTGCGGA-------------------------ATC
     if tag_match_span.count('-') > allowed_errors or seq_match_span.count('-')\
@@ -76,7 +82,10 @@ def matches(tag, seq_match_span, tag_match_span, allowed_errors):
         return matches, error
 
 def smithWaterman(seq, tags, allowed_errors):
-    '''Borrowed & heavily modified from http://github.com/chapmanb/bcbb/tree/master'''
+    '''Smith-Waterman alignment method for aligning tags with their respective
+    sequences.  Only called when regular expression matching patterns fail.  
+    Borrowed & heavily modified from 
+    http://github.com/chapmanb/bcbb/tree/master'''
     #if seq == 'CGAGAGATACAAAAGCAGCAGCGGAATCGATTCCGCTGCTGC':
     #    pdb.set_trace()
     high_score = {'tag':None, 'seq_match':None, 'mid_match':None, 'score':None, 
@@ -105,6 +114,7 @@ def smithWaterman(seq, tags, allowed_errors):
         return None
 
 def qualTrimming(record, min_score=10):
+    '''Remove ambiguous bases from 5' and 3' sequence ends'''
     s = str(record.seq)
     sl = list(s)
     for q in enumerate(record.letter_annotations["phred_quality"]):
@@ -121,6 +131,7 @@ def qualTrimming(record, min_score=10):
     return trim(record, left_trim, right_trim)
 
 def midTrim(record, tags, max_gap_char=5, **kwargs):
+    '''Remove the MID tag from the sequence read'''
     #if record.id == 'MID_No_Error_ATACGACGTA':
     #    pdb.set_trace()
     s = str(record.seq)
@@ -141,6 +152,8 @@ def SWMatchPos(seq_match_span, start, stop):
     return start, stop
 
 def leftLinker(s, tags, max_gap_char, gaps=False, **kwargs):
+    '''Mathing methods for left linker - regex first, followed by fuzzy (SW)
+    alignment, if the option is passed'''
     for tag in tags:
         if gaps:
             r = re.compile(('^%s') % (tag))
@@ -168,13 +181,17 @@ def leftLinker(s, tags, max_gap_char, gaps=False, **kwargs):
     else:
         return None
 
-def rightLinker(s, tags, max_gap_char, **kwargs):
+def rightLinker(s, tags, max_gap_char, gaps=False **kwargs):
+    '''Mathing methods for right linker - regex first, followed by fuzzy (SW)
+    alignment, if the option is passed'''
     #if s == 'GAGAGAGAGAGAGAGAGAGAGAGAGAGAGAGAGAGAG':
     #    pdb.set_trace()
     revtags = revCompTags(tags)
     for tag in revtags:
-        #r = re.compile(('%s$') % (tag))
-        r = re.compile(('%s[acgtnACGTN]{0,%s}$') % (tag, max_gap_char))
+        if gaps:
+            r = re.compile(('%s$') % (tag))
+        else:
+            r = re.compile(('%s[acgtnACGTN]{0,%s}$') % (tag, max_gap_char))
         match = re.search(r, s)
         if match:
             m_type = 'regex'
@@ -252,6 +269,8 @@ def reverse(items):
     return dict(l)
 
 def createSeqTable(c):
+    '''Create necessary tables in our database to hold the sequence and 
+    tagging data'''
     # TODO:  move blob column to its own table, indexed by id
     # TODO:  move all tables to InnoDB??
     try:
@@ -281,6 +300,8 @@ def createQualSeqTable(c):
         MEDIUMINT UNSIGNED, record MEDIUMBLOB, PRIMARY KEY (id)) ENGINE=InnoDB''')
 
 def concatCheck(record, all_tags, all_tags_regex, reverse_linkers, **kwargs):
+    '''Check screened sequence for the presence of concatemers by scanning 
+    for all possible tags - after the 5' and 3' tags have been removed'''
     s = str(record.seq)
     m_type = None
     # do either/or to try and keep speed up, somewhat
@@ -307,6 +328,7 @@ def concatCheck(record, all_tags, all_tags_regex, reverse_linkers, **kwargs):
         return None, None, None
 
 def sequenceCount(input):
+    '''Determine the number of sequence reads in the database'''
     handle = open(input, 'rU')
     lines = handle.read().count('>')
     handle.close()
@@ -314,6 +336,11 @@ def sequenceCount(input):
             
 
 def qualOnlyWorker(record, qual, conf):
+    # we need a separate connection for each mysql cursor or they are going
+    # start going into locking hell and things will go poorly. Creating a new 
+    # connection for each worker process is the easiest/laziest solution.
+    # Connection pooling (DB-API) didn't work so hot, but probably because 
+    # I'm slightly retarded.
     conn = MySQLdb.connect(user=conf.get('Database','USER'), 
         passwd=conf.get('Database','PASSWORD'), 
         db=conf.get('Database','DATABASE'))
@@ -343,7 +370,7 @@ def linkerWorker(record, qual, tags, all_tags, all_tags_regex, reverse_mid, reve
     # start going into locking hell and things will go poorly. Creating a new 
     # connection for each worker process is the easiest/laziest solution.
     # Connection pooling (DB-API) didn't work so hot, but probably because 
-    #I'm slightly retarded.
+    # I'm slightly retarded.
     conn = MySQLdb.connect(user=conf.get('Database','USER'), 
         passwd=conf.get('Database','PASSWORD'), 
         db=conf.get('Database','DATABASE'))
@@ -407,6 +434,7 @@ def linkerWorker(record, qual, tags, all_tags, all_tags_regex, reverse_mid, reve
     return
 
 def motd():
+    '''Startup info'''
     motd = '''
     ##############################################################
     #                     msatcommander 454                      #
@@ -422,6 +450,7 @@ def motd():
     print motd
 
 def interface():
+    '''Command-line interface'''
     usage = "usage: %prog [options]"
 
     p = optparse.OptionParser(usage)
@@ -441,6 +470,7 @@ metavar='FILE')
     return options, arg
 
 def main():
+    '''Main loop'''
     start_time = time.time()
     options, arg = interface()
     motd()
@@ -460,6 +490,8 @@ def main():
     elif qualTrim and linkerTrim:
         mid, reverse_mid = dict(conf.items('MID')), reverse(conf.items('MID'))
         linkers, reverse_linkers = dict(conf.items('Linker')), reverse(conf.items('Linker'))
+        #TODO:  Add levenshtein distance script to automagically determine 
+        #distance
         reverse_mid[None] = None
         reverse_linkers[None] = None
         clust = conf.items('Clusters')
