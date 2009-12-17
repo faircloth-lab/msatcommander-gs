@@ -162,7 +162,8 @@ def updateSequenceTable(cur):
     #pdb.set_trace()
     try:
         cur.execute('''ALTER TABLE sequence_test ADD COLUMN match_count SMALLINT UNSIGNED''')
-        print 'Added match_count column'
+        cur.execute('''ALTER TABLE sequence_test ADD INDEX match_count_idx''')
+        print 'Added match_count column and index'
     except MySQLdb._mysql.OperationalError, e:
         if e[0] == 1060:
             cur.execute('''UPDATE sequence_test SET match_count = NULL''')
