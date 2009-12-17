@@ -272,7 +272,7 @@ def createSeqTable(c):
     '''Create necessary tables in our database to hold the sequence and 
     tagging data'''
     # TODO:  move blob column to its own table, indexed by id
-    # TODO:  move all tables to InnoDB??
+    # DONE:  move all tables to InnoDB??
     try:
         c.execute('''DROP TABLE sequence_test''')
     except:
@@ -289,7 +289,7 @@ def createSeqTable(c):
 
 def createQualSeqTable(c):
     # TODO:  move blob column to its own table, indexed by id
-    # TODO:  move all tables to InnoDB??
+    # DONE:  move all tables to InnoDB??
     try:
         c.execute('''DROP TABLE sequence''')
     except:
