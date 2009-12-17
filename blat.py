@@ -118,8 +118,8 @@ def worker(tb, pkey, name, seq_trimmed):
         conn = MySQLdb.connect(user="python", passwd="BgDBYUTvmzA3", 
         db="454_msatcommander")
         cur = conn.cursor()
-        # TODO: change to pkey right here
-        sequence = ('>%s\n%s\n' % (name, seq_trimmed))
+        # DONE: change to pkey right here
+        sequence = ('>%s\n%s\n' % (pkey, seq_trimmed))
         #pdb.set_trace()
         blat_result, blat_error = subprocess.Popen('/Users/bcf/bin/i386/blat %s stdin -mask=lower -out=blast8 -noHead stdout' % tb, shell=True, stdin = subprocess.PIPE, stdout = subprocess.PIPE, stderr=subprocess.PIPE).communicate(input=sequence)
         if blat_error:
@@ -147,9 +147,10 @@ def createBlatTable(cur):
         cur.execute('''DROP TABLE blat''')
     except:
         pass
-        # TODO:  change q_name and t_name columns to q_id and t_id when ref changes
-    cur.execute('''CREATE TABLE blat (id INT UNSIGNED NOT NULL, q_name 
-        VARCHAR(100), t_name VARCHAR(100), strand VARCHAR(1), percent 
+        # DONE:  change q_name and t_name columns to q_id and t_id when ref changes
+        # TODO:  change referencing to foreign key type w/ InnoDB
+    cur.execute('''CREATE TABLE blat (id INT UNSIGNED NOT NULL, q_id 
+        INT UNSIGNED NOT NULL, t_id INT UNSIGNED NOT NULL, strand VARCHAR(1), percent 
         DECIMAL(4,1), length SMALLINT unsigned, mismatches SMALLINT UNSIGNED, 
         q_gaps SMALLINT UNSIGNED, q_size SMALLINT UNSIGNED, q_start SMALLINT 
         UNSIGNED, q_end SMALLINT UNSIGNED, t_size SMALLINT UNSIGNED, t_start 
@@ -249,8 +250,8 @@ def main():
             tf = tempfile.mkstemp(prefix='clean-%s-' % c, suffix='.fa', dir=tdir)
             tf_handle = open(tf[1], 'w')
             for s in sequences:
-                # TODO:  change s[1] to s[0] right here to add target id
-                tf_handle.write(fasta(s[1],s[2]))
+                # DONE:  change s[1] to s[0] right here to add target id
+                tf_handle.write(fasta(s[0],s[2]))
             tf_handle.close()
             print "Masking low complexity regions in:\t%s" % tf[1]
             if n_procs > 1:
