@@ -16,11 +16,11 @@ from math import log
 #from Bio import SeqIO
 
 def db_write(cur, db_row):
-    cur.execute('''INSERT INTO blat (id, q_name, t_name, strand, percent, 
+    cur.execute('''INSERT INTO blat (q_name, t_name, strand, percent, 
     length, mismatches, q_gaps, q_size, q_start, q_end, t_size, t_start, 
     t_end, e_score, bit_score) 
-    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''', 
-    (db_row['pkey'], db_row['qName'], db_row['tName'], db_row['strand'], 
+    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''', 
+    (db_row['qName'], db_row['tName'], db_row['strand'], 
     db_row['percent'], db_row['length'], db_row['misMatch'], db_row['qGaps'], 
     db_row['qSize'], db_row['qStart'], db_row['qEnd'], db_row['tSize'], 
     db_row['tStart'], db_row['tEnd'], db_row['eScore'], db_row['bitScore']))
@@ -149,13 +149,13 @@ def createBlatTable(cur):
         pass
         # DONE:  change q_name and t_name columns to q_id and t_id when ref changes
         # DONE:  change referencing to foreign key type w/ InnoDB
-    cur.execute('''CREATE TABLE blat (id INT UNSIGNED NOT NULL, q_id 
-        INT UNSIGNED NOT NULL, t_id INT UNSIGNED NOT NULL, strand VARCHAR(1), percent 
+    cur.execute('''CREATE TABLE blat (id INT UNSIGNED NOT NULL, t_id INT 
+        UNSIGNED NOT NULL, strand VARCHAR(1), percent 
         DECIMAL(4,1), length SMALLINT unsigned, mismatches SMALLINT UNSIGNED, 
         q_gaps SMALLINT UNSIGNED, q_size SMALLINT UNSIGNED, q_start SMALLINT 
         UNSIGNED, q_end SMALLINT UNSIGNED, t_size SMALLINT UNSIGNED, t_start 
         SMALLINT UNSIGNED, t_end SMALLINT UNSIGNED, e_score FLOAT, bit_score 
-        FLOAT, FOREIGN KEY (q_id) REFERENCES sequence (id), FOREIGN KEY 
+        FLOAT, FOREIGN KEY (id) REFERENCES sequence (id), FOREIGN KEY 
         (t_id) REFERENCES sequence (id)) ENGINE=InnoDB''')
         
 def updateSequenceTable(cur):
