@@ -328,7 +328,7 @@ def concatCheck(record, all_tags, all_tags_regex, reverse_linkers, **kwargs):
         return None, None, None
 
 def sequenceCount(input):
-    '''Determine the number of sequence reads in the database'''
+    '''Determine the number of sequence reads in the input'''
     handle = open(input, 'rU')
     lines = handle.read().count('>')
     handle.close()
