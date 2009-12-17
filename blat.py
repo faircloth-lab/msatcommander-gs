@@ -148,15 +148,15 @@ def createBlatTable(cur):
     except:
         pass
         # DONE:  change q_name and t_name columns to q_id and t_id when ref changes
-        # TODO:  change referencing to foreign key type w/ InnoDB
+        # DONE:  change referencing to foreign key type w/ InnoDB
     cur.execute('''CREATE TABLE blat (id INT UNSIGNED NOT NULL, q_id 
         INT UNSIGNED NOT NULL, t_id INT UNSIGNED NOT NULL, strand VARCHAR(1), percent 
         DECIMAL(4,1), length SMALLINT unsigned, mismatches SMALLINT UNSIGNED, 
         q_gaps SMALLINT UNSIGNED, q_size SMALLINT UNSIGNED, q_start SMALLINT 
         UNSIGNED, q_end SMALLINT UNSIGNED, t_size SMALLINT UNSIGNED, t_start 
         SMALLINT UNSIGNED, t_end SMALLINT UNSIGNED, e_score FLOAT, bit_score 
-        FLOAT, INDEX blat_id (id), INDEX blat_q_name (q_name), 
-        INDEX blat_q_size (q_size))''')
+        FLOAT, FOREIGN KEY (q_id) REFERENCES sequence (id), FOREIGN KEY 
+        (t_id) REFERENCES sequence (id)) ENGINE=InnoDB''')
         
 def updateSequenceTable(cur):
     #pdb.set_trace()
