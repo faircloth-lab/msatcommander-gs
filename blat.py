@@ -16,7 +16,7 @@ from math import log
 #from Bio import SeqIO
 
 def db_write(cur, db_row):
-    cur.execute('''INSERT INTO blat (q_name, t_name, strand, percent, 
+    cur.execute('''INSERT INTO blat (id, t_id, strand, percent, 
     length, mismatches, q_gaps, q_size, q_start, q_end, t_size, t_start, 
     t_end, e_score, bit_score) 
     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''', 
@@ -28,7 +28,7 @@ def db_write(cur, db_row):
     #cur.commit()
 
 def primaryMatchCount(cur, pkey, match_count):
-    cur.execute('''UPDATE sequence_test SET match_count = %s WHERE id = %s''', (match_count, pkey))
+    cur.execute('''UPDATE sequence SET match_count = %s WHERE id = %s''', (match_count, pkey))
 
 def pslPercentId(psl, protein=False, mRNA=True):
     '''
@@ -72,7 +72,7 @@ def pslScore(psl, sizeMul = 1):
     return psl
 
 
-def parse_blat(cur, pkey, blat_result, seq_name, seq_seq):
+def parse_blat(conn, cur, pkey, blat_result, seq_name, seq_seq):
     percent = 90.0
     length = 25
     e_score = 1e-10
@@ -104,6 +104,8 @@ def parse_blat(cur, pkey, blat_result, seq_name, seq_seq):
             # update the dependent table
             db_row['pkey'] = pkey
             db_write(cur, db_row)
+            # it appears we need to commit here to avoid a mysterious deadlock issue
+            conn.commit()
             if db_row['tName'] not in unique_matches:
                 unique_matches.append(db_row['tName'])
                 match_count += 1
@@ -112,11 +114,14 @@ def parse_blat(cur, pkey, blat_result, seq_name, seq_seq):
             pass
     # update the primary table with the match count
     primaryMatchCount(cur,pkey,match_count)
+    # it appears we need to commit here to avoid a mysterious deadlock issue
+    conn.commit()
     #pdb.set_trace()
 
-def worker(tb, pkey, name, seq_trimmed):
-        conn = MySQLdb.connect(user="python", passwd="BgDBYUTvmzA3", 
-        db="454_msatcommander")
+def worker(conf, tb, pkey, name, seq_trimmed):
+        conn = MySQLdb.connect(user=conf.get('Database','USER'), 
+            passwd=conf.get('Database','PASSWORD'), 
+            db=conf.get('Database','DATABASE'))   
         cur = conn.cursor()
         # DONE: change to pkey right here
         sequence = ('>%s\n%s\n' % (pkey, seq_trimmed))
@@ -127,7 +132,7 @@ def worker(tb, pkey, name, seq_trimmed):
         if blat_result and not blat_error:
             # drop the ending newline
             blat_result = blat_result.split('\n')[:-1]
-            parse_blat(cur, pkey, blat_result, name, seq_trimmed)
+            parse_blat(conn, cur, pkey, blat_result, name, seq_trimmed)
             #print 'parsing'
         elif not blat_result and not blat_error:
             #pdb.set_trace()
@@ -161,12 +166,12 @@ def createBlatTable(cur):
 def updateSequenceTable(cur):
     #pdb.set_trace()
     try:
-        cur.execute('''ALTER TABLE sequence_test ADD COLUMN match_count SMALLINT UNSIGNED''')
-        cur.execute('''ALTER TABLE sequence_test ADD INDEX match_count_idx''')
+        cur.execute('''ALTER TABLE sequence ADD COLUMN match_count SMALLINT UNSIGNED''')
+        cur.execute('''ALTER TABLE sequence ADD INDEX match_count_idx (match_count)''')
         print 'Added match_count column and index'
     except MySQLdb._mysql.OperationalError, e:
         if e[0] == 1060:
-            cur.execute('''UPDATE sequence_test SET match_count = NULL''')
+            cur.execute('''UPDATE sequence SET match_count = NULL''')
             print 'Zeroed-out match_count column'
     except:
         print "Error adding match_count to sequence table"
@@ -217,6 +222,8 @@ def main():
     print 'Started: ', time.strftime("%a %b %d, %Y  %H:%M:%S", time.localtime(start_time))
     conf = ConfigParser.ConfigParser()
     conf.read(options.conf)
+    # TODO:  increase number of processes because each is relatively
+    # lightweight?
     if conf.getboolean('Multiprocessing', 'MULTIPROCESSING'):
         # get num processors
         n_procs = conf.get('Multiprocessing','processors')
@@ -236,17 +243,18 @@ def main():
     createBlatTable(cur)
     updateSequenceTable(cur)
     conn.commit()
-    cur.close()
-    conn.close()
     # get clusters from conf file
     cluster = [c[1] for c in conf.items('Clusters')]
     # create a temp directory for results
     tdir = tempfile.mkdtemp(prefix='msatcommander-454-')
     #print tdir
     # get sequences from Dbase by cluster
+    # TODO:  consider using multiprocessing on a per-cluster (rather than per
+    # sequence basis - given the fact that each process may incur a lot of
+    # overhead when called only on a single sequence)
     for c in cluster:
         # get all sequence to build the 2bit file
-        cur.execute('''SELECT id, name, seq_trimmed FROM sequence_test WHERE cluster = %s''', (c,))
+        cur.execute('''SELECT id, name, seq_trimmed FROM sequence WHERE cluster = %s''', (c,))
         sequences = cur.fetchall()
         if sequences:
             tf = tempfile.mkstemp(prefix='clean-%s-' % c, suffix='.fa', dir=tdir)
@@ -266,7 +274,7 @@ def main():
             print "Building twobit file from:\t\t%s" % masked_tf
             two_bit = subprocess.Popen('/Users/bcf/bin/i386/faToTwoBit %s %s' % (masked_tf, tb), shell=True, stderr = subprocess.PIPE).communicate()
             # get only msat-containing sequences
-            cur.execute('''SELECT id, name, seq_trimmed FROM sequence_test WHERE cluster = %s and msat = 1''', (c,))
+            cur.execute('''SELECT id, name, seq_trimmed FROM sequence WHERE cluster = %s and msat = 1''', (c,))
             sequences = cur.fetchall()
             if n_procs > 1:
                 threads = []
@@ -274,7 +282,7 @@ def main():
                 while index < len(sequences):
                 #while index < 50:
                     if len(threads) < n_procs:
-                        p = multiprocessing.Process(target=worker, args=(tb, sequences[index][0], sequences[index][1], sequences[index][2]))
+                        p = multiprocessing.Process(target=worker, args=(conf, tb, sequences[index][0], sequences[index][1], sequences[index][2]))
                         p.start()
                         threads.append(p)
                         index += 1
@@ -294,8 +302,10 @@ def main():
                 #while index < len(sequences):
                 while index < 50:
                     # send 0th item of list to worker and remove
-                    worker(tb, sequences[index][0], sequences[index][1], sequences[index][2])
+                    worker(conf, tb, sequences[index][0], sequences[index][1], sequences[index][2])
                     index += 1
+    cur.close()
+    conn.close()
     end_time = time.time()
     print 'Ended: ', time.strftime("%a %b %d, %Y  %H:%M:%S", time.localtime(end_time))
     print '\nTime for execution: ', (end_time - start_time)/60, 'minutes'
