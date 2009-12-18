@@ -512,7 +512,7 @@ def main():
         if n_procs == 'Auto':
             # TODO:  change this?
             # we'll start 2X-1 threads (X = processors).
-            n_procs = multiprocessing.cpu_count()
+            n_procs = multiprocessing.cpu_count() - 1
         else:
             n_procs = int(n_procs)
         print 'Multiprocessing.  Number of processors = ', n_procs
