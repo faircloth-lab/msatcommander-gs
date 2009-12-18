@@ -229,8 +229,9 @@ def main():
         n_procs = 1
         print 'Not using multiprocessing. Number of processors = ', n_procs
     # create a table for the output
-    conn = MySQLdb.connect(user="python", passwd="BgDBYUTvmzA3", 
-    db="454_msatcommander")
+    conn = MySQLdb.connect(user=conf.get('Database','USER'), 
+        passwd=conf.get('Database','PASSWORD'), 
+        db=conf.get('Database','DATABASE'))
     cur = conn.cursor()
     createBlatTable(cur)
     updateSequenceTable(cur)
