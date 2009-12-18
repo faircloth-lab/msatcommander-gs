@@ -181,7 +181,7 @@ def leftLinker(s, tags, max_gap_char, gaps=False, **kwargs):
     else:
         return None
 
-def rightLinker(s, tags, max_gap_char, gaps=False **kwargs):
+def rightLinker(s, tags, max_gap_char, gaps=False, **kwargs):
     '''Mathing methods for right linker - regex first, followed by fuzzy (SW)
     alignment, if the option is passed'''
     #if s == 'GAGAGAGAGAGAGAGAGAGAGAGAGAGAGAGAGAGAG':
