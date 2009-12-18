@@ -4,3 +4,13 @@
 *.graffle
 results
 *.pyc
+*.xls*
+blat/
+*.txt
+schist/
+tables/
+*.R
+*.fna
+*.qual
+*.csv
+*.pdf
