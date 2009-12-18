@@ -274,10 +274,10 @@ def createSeqTable(c):
     # TODO:  move blob column to its own table, indexed by id
     # DONE:  move all tables to InnoDB??
     try:
-        c.execute('''DROP TABLE sequence_test''')
+        c.execute('''DROP TABLE sequence''')
     except:
         pass
-    c.execute('''CREATE TABLE sequence_test (id INT UNSIGNED NOT NULL 
+    c.execute('''CREATE TABLE sequence (id INT UNSIGNED NOT NULL 
         AUTO_INCREMENT,name VARCHAR(100),mid VARCHAR(30),mid_seq VARCHAR(30),
         mid_match VARCHAR(30),mid_method VARCHAR(50),linker VARCHAR(30),
         linker_seq VARCHAR(30),linker_match VARCHAR(30),linker_method 
@@ -285,7 +285,7 @@ def createSeqTable(c):
         concat_match varchar(30), concat_method VARCHAR(50),
         n_count SMALLINT UNSIGNED, untrimmed_len SMALLINT UNSIGNED, 
         seq_trimmed TEXT, trimmed_len SMALLINT UNSIGNED, record BLOB, PRIMARY
-        KEY (id), INDEX sequence_test_cluster (cluster)) ENGINE=InnoDB''')
+        KEY (id), INDEX sequence_cluster (cluster)) ENGINE=InnoDB''')
 
 def createQualSeqTable(c):
     # TODO:  move blob column to its own table, indexed by id
@@ -417,7 +417,7 @@ def linkerWorker(record, qual, tags, all_tags, all_tags_regex, reverse_mid, reve
     # pickle the sequence record, so we can store it as a BLOB in MySQL, we
     # can thus recurrect it as a sequence object when we need it next.
     record_pickle = cPickle.dumps(record,1)
-    cur.execute('''INSERT INTO sequence_test (name, mid, mid_seq, mid_match, 
+    cur.execute('''INSERT INTO sequence (name, mid, mid_seq, mid_match, 
         mid_method, linker, linker_seq, linker_match, linker_method, cluster, 
         concat_seq, concat_match, concat_method, n_count, untrimmed_len, 
         seq_trimmed, trimmed_len, record) 
