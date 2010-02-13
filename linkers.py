@@ -130,7 +130,7 @@ def qualTrimming(record, min_score=10):
         right_trim = right_trim.end()
     return trim(record, left_trim, right_trim)
 
-def midTrim(record, tags, max_gap_char=5, **kwargs):
+def midTrim(record, tags, max_gap_char=22, **kwargs):
     '''Remove the MID tag from the sequence read'''
     #if record.id == 'MID_No_Error_ATACGACGTA':
     #    pdb.set_trace()
@@ -212,15 +212,15 @@ def rightLinker(s, tags, max_gap_char, gaps=False, **kwargs):
     else:
         return None
 
-def linkerTrim(record, tags, max_gap_char=5, **kwargs):
+def linkerTrim(record, tags, max_gap_char=22, **kwargs):
     '''Use regular expression and (optionally) fuzzy string matching
     to locate and trim linkers from sequences'''
     #if record.id == 'FX5ZTWB02DOPOT':
     #    pdb.set_trace()
     m_type  = False
     s       = str(record.seq)
-    left    = leftLinker(s, tags, max_gap_char=5, fuzzy=kwargs['fuzzy'])
-    right   = rightLinker(s, tags, max_gap_char=5, fuzzy=kwargs['fuzzy'])
+    left    = leftLinker(s, tags, max_gap_char=22, fuzzy=kwargs['fuzzy'])
+    right   = rightLinker(s, tags, max_gap_char=22, fuzzy=kwargs['fuzzy'])
     if left and right and left[0] == right[0]:
         # we can have lots of conditional matches here
         if left[2] <= max_gap_char and right[2] >= (len(s) - (len(right[0]) +\
@@ -279,10 +279,10 @@ def createSeqTable(c):
         pass
     c.execute('''CREATE TABLE sequence (id INT UNSIGNED NOT NULL 
         AUTO_INCREMENT,name VARCHAR(100),mid VARCHAR(30),mid_seq VARCHAR(30),
-        mid_match VARCHAR(30),mid_method VARCHAR(50),linker VARCHAR(30),
-        linker_seq VARCHAR(30),linker_match VARCHAR(30),linker_method 
-        VARCHAR(50),cluster VARCHAR(50),concat_seq VARCHAR(30), 
-        concat_match varchar(30), concat_method VARCHAR(50),
+        mid_match VARCHAR(30),mid_method VARCHAR(50),linker VARCHAR(50),
+        linker_seq VARCHAR(50),linker_match VARCHAR(50),linker_method 
+        VARCHAR(50),cluster VARCHAR(75),concat_seq VARCHAR(50), 
+        concat_match varchar(50), concat_method VARCHAR(50),
         n_count SMALLINT UNSIGNED, untrimmed_len SMALLINT UNSIGNED, 
         seq_trimmed TEXT, trimmed_len SMALLINT UNSIGNED, record BLOB, PRIMARY
         KEY (id), INDEX sequence_cluster (cluster)) ENGINE=InnoDB''')
@@ -387,7 +387,6 @@ def linkerWorker(record, qual, tags, all_tags, all_tags_regex, reverse_mid, reve
         # provided no exact matches, use fuzzy matching (Smith-Waterman) +
         # error correction to find Linker
         mid, trimmed, seq_match, m_type = mid
-        #TODO:  Add length parameters
         linker = linkerTrim(trimmed, tags[mid], fuzzy=True)
         if linker:
             l_tag, l_trimmed, l_seq_match, l_critter, l_m_type = linker
