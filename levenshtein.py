@@ -62,9 +62,12 @@ def interface():
     p = optparse.OptionParser(usage)
 
     p.add_option('--configuration', '-c', dest = 'conf', action='store', \
-type='string', default = None, help='The path to the configuration file.', \
-metavar='FILE')
-
+        type='string', default = None, \
+        help='The path to the configuration file.', \
+        metavar='FILE')
+    p.add_option('--section', '-s', dest = 'section', action = 'store',\
+        type='string', default = None, \
+        help='The section of the config file to evaluate', metavar='FILE')
     (options,arg) = p.parse_args()
     if not options.conf:
         p.print_help()
@@ -85,21 +88,30 @@ def main():
     options, arg = interface()
     conf = ConfigParser.ConfigParser()
     conf.read(options.conf)
-    clust = conf.items('Clusters')
-    links = dict(conf.items('Linker'))
     groups = {}
-    for c in clust:
-        group = c[0].split(',')[0]
-        linker = c[0].split(',')[1].strip()
-        if group in groups.keys():
-            groups[group] = groups[group] + ((linker,links[linker]),)
-        else:
-            groups[group] = ((linker,links[linker]),)
+    if options.section == 'Clusters':
+        clust = conf.items('Clusters')
+        links = dict(conf.items('Linker'))
+        for c in clust:
+            group = c[0].split(',')[0]
+            linker = c[0].split(',')[1].strip()
+            if group in groups.keys():
+                groups[group] = groups[group] + ((linker,links[linker]),)
+            else:
+                groups[group] = ((linker,links[linker]),) 
+    elif options.section == 'LinkerGroups':
+        #pdb.set_trace()
+        clust = conf.items('LinkerGroups')
+        links = dict(conf.items('Linker'))
+        g = ()
+        for c in clust:
+            g += ((c[0], links[c[0]]),)
+        groups[1] = g
     for g in groups:
-        pdb.set_trace()
+        #pdb.set_trace()
         ed = getDistance(groups[g], g)
         ed[0].sort()
-        print '%s\n\tlinkers = %s\n\tedit distance = %s' % (g, str(ed[0]), ed[1])
+        print '%s %s\n\tlinkers = %s\n\tedit distance = %s' % (options.section, g, str(ed[0]), ed[1])
 
     
 if __name__ == '__main__':
