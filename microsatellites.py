@@ -125,6 +125,7 @@ def createMaskTable(cur):
             mask_name (name)) ENGINE=InnoDB''')
 
 def updateSequenceTable(cur):
+    # TODO:  This is dumb.  Just add the column in the linkers.py
     try:
         cur.execute('''ALTER TABLE sequence ADD COLUMN msat BOOLEAN''')
     except MySQLdb._mysql.OperationalError, e:
