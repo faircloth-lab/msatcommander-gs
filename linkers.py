@@ -31,20 +31,35 @@ def tagLibrary(mids, linkers, clust):
     track which organisms go with which MID+linker combo'''
     tl = {}
     for c in clust:
-        m,l = c[0].replace(' ','').split(',')
-        org = c[1]
-        if mids[m] not in tl.keys():
-            tl[mids[m]] = {linkers[l]:org}
-        else:
-            tl[mids[m]][linkers[l]] = org
+        if mids and linkers:
+            m,l = c[0].replace(' ','').split(',')
+            org = c[1]
+            if mids[m] not in tl.keys():
+                tl[mids[m]] = {linkers[l]:org}
+            else:
+                tl[mids[m]][linkers[l]] = org
+        elif not mids and linkers:
+            l = c[0]
+            org = c[1]
+            tl[linkers[l]] = org
+        elif mids and not linker:
+            pass
+    #pdb.set_trace()
     return tl
 
 def allPossibleTags(mids, linkers, clust):
+    '''Create regular expressions for the forward and reverse complements
+    of all of the tags sequences used in a run'''
+    # at = all tags; rat = reverse complement all tags
     at = []
     rat = []
     for c in clust:
-        m,l = c[0].replace(' ','').split(',')
-        # at = all tags; rat = reverse all tags
+        if mids and linkers:
+            m,l = c[0].replace(' ','').split(',')
+        elif not mids and linkers:
+            l = c[0]
+        elif mids and not linkers:
+            pass
         at.append(linkers[l])
         rat.append(re.compile('%s' % linkers[l]))
         at.append(revComp(linkers[l]))
@@ -365,7 +380,7 @@ def qualOnlyWorker(record, qual, conf):
     conn.close()
     return
 
-def linkerWorker(record, qual, tags, all_tags, all_tags_regex, reverse_mid, reverse_linkers, conf):
+def linkerWorker(record, qual, tags, all_tags, all_tags_regex, reverse_mid, reverse_linkers, conf, doMidTrim, doLinkerTrim):
     # we need a separate connection for each mysql cursor or they are going
     # start going into locking hell and things will go poorly. Creating a new 
     # connection for each worker process is the easiest/laziest solution.
@@ -379,24 +394,38 @@ def linkerWorker(record, qual, tags, all_tags, all_tags_regex, reverse_mid, reve
     untrimmed_len = len(record.seq)
     qual_trimmed = qualTrimming(record, qual)
     N_count = str(qual_trimmed.seq).count('N')
-    # search on 5' (left) end for MID
-    mid = midTrim(qual_trimmed, tags, fuzzy=True)
-    #TODO:  Add length parameters
-    if mid:
-        # if MID, search for exact matches (for and revcomp) on Linker
-        # provided no exact matches, use fuzzy matching (Smith-Waterman) +
-        # error correction to find Linker
-        mid, trimmed, seq_match, m_type = mid
-        linker = linkerTrim(trimmed, tags[mid], fuzzy=True)
+    pdb.set_trace()
+    if doMidTrim and doLinkerTrim:
+        # search on 5' (left) end for MID
+        mid = midTrim(qual_trimmed, tags, fuzzy=True)
+        if mid:
+            # if MID, search for exact matches (for and revcomp) on Linker
+            # provided no exact matches, use fuzzy matching (Smith-Waterman) +
+            # error correction to find Linker
+            mid, trimmed, seq_match, m_type = mid
+            linker = linkerTrim(trimmed, tags[mid], fuzzy=True)
+            if linker:
+                l_tag, l_trimmed, l_seq_match, l_critter, l_m_type = linker
+            else:
+                l_tag, l_trimmed, l_seq_match, l_critter, l_m_type, concat_type, \
+                concat_count = (None,) * 7
+        else:
+            mid, trimmed, seq_match, m_type = (None,) * 4
+            l_tag, l_trimmed, l_seq_match, l_critter, l_m_type, concat_type, \
+            concat_count = (None,) * 7
+            
+    elif not doMidTrim and doLinkerTrim:
+        mid, trimmed, seq_match, m_type = (None,) * 4
+        linker = linkerTrim(qual_trimmed, tags, fuzzy=True)
         if linker:
             l_tag, l_trimmed, l_seq_match, l_critter, l_m_type = linker
         else:
             l_tag, l_trimmed, l_seq_match, l_critter, l_m_type, concat_type, \
             concat_count = (None,) * 7
-    else:
-        mid, trimmed, seq_match, m_type = (None,) * 4
-        l_tag, l_trimmed, l_seq_match, l_critter, l_m_type, concat_type, \
-        concat_count = (None,) * 7
+    elif doMidTrim and not doLinkerTrim:
+        pass
+    #TODO:  Add length parameters
+
     # check for concatemers
     concat_check = False
     if concat_check:
@@ -480,16 +509,34 @@ def main():
         passwd=conf.get('Database','PASSWORD'), 
         db=conf.get('Database','DATABASE'))
     cur = conn.cursor()
-    qualTrim = conf.getboolean('Steps', 'TRIM')
-    qual = conf.getint('Qual', 'MIN_SCORE')
-    linkerTrim = conf.getboolean('Steps', 'LINKERTRIM')
-    if qualTrim and not linkerTrim:
+    # TODO: deal with trimming or no trimming
+    qualTrim = conf.getboolean('Steps', 'Trim')
+    qual = conf.getint('Qual', 'MinScore')
+    midTrim = conf.getboolean('Steps','MidTrim')
+    linkerTrim = conf.getboolean('Steps', 'LinkerTrim')
+    if not midTrim and not linkerTrim:
         createQualSeqTable(cur)
+        conn.commit()
+    elif midTrim and not linkerTrim:
+        pass
+    elif not midTrim and linkerTrim:
+        #pdb.set_trace()
+        mid             = None
+        reverse_mid     = None
+        linkers         = dict(conf.items('Linker'))
+        reverse_linkers = reverse(conf.items('Linker'))
+        reverse_linkers[None] = None
+        clust = conf.items('LinkerGroups')
+        # build tag library 1X
+        tags = tagLibrary(mid, linkers, clust)
+        all_tags, all_tags_regex = allPossibleTags(mid, linkers, clust)
+        # crank out a new table for the data
+        createSeqTable(cur)
         conn.commit()
     elif qualTrim and linkerTrim:
         mid, reverse_mid = dict(conf.items('MID')), reverse(conf.items('MID'))
         linkers, reverse_linkers = dict(conf.items('Linker')), reverse(conf.items('Linker'))
-        #TODO:  Add levenshtein distance script to automagically determine 
+        #TODO:  Add levenshtein distance script to automagically determine
         #distance
         reverse_mid[None] = None
         reverse_linkers[None] = None
@@ -529,7 +576,7 @@ def main():
                     elif qualTrim and linkerTrim:
                         p = multiprocessing.Process(target=linkerWorker, args=(
                         record.next(), qual, tags, all_tags, all_tags_regex, 
-                        reverse_mid, reverse_linkers, conf))
+                        reverse_mid, reverse_linkers, conf, midTrim, linkerTrim))
                     p.start()
                     threads.append(p)
                     if (pb_inc+1)%1000 == 0:
@@ -556,7 +603,7 @@ def main():
                     qualOnlyWorker(record.next(), qual, conf)
                 elif qualTrim and linkerTrim:
                     linkerWorker(record.next(), qual, tags, all_tags, 
-                    all_tags_regex, reverse_mid, reverse_linkers, conf)
+                    all_tags_regex, reverse_mid, reverse_linkers, conf, midTrim, linkerTrim)
                 if (pb_inc+1)%1000 == 0:
                     pb.__call__(pb_inc+1)
                 elif pb_inc + 1 == seqcount:
