@@ -5,7 +5,6 @@
 results
 *.pyc
 *.xls*
-blat/
 *.txt
 schist/
 tables/
@@ -14,3 +13,4 @@ tables/
 *.qual
 *.csv
 *.pdf
+noVc/
