@@ -143,7 +143,7 @@ def motd():
     # - sequence pooling                                         #
     # - primer design                                            #
     #                                                            #
-    # Copyright (c) 2009 Brant C. Faircloth & Travis C. Glenn    #
+    # Copyright (c) 2010 Brant C. Faircloth                      #
     ##############################################################\n
     '''
     print motd
