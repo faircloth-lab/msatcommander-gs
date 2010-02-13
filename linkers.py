@@ -8,7 +8,7 @@ Copyright (c) 2009 Brant Faircloth. All rights reserved.
 """
 
 import os, sys, re, pdb, time, numpy, string, MySQLdb, ConfigParser, multiprocessing, cPickle, optparse, progress
-from Bio import Seq
+from Bio.SeqRecord import SeqRecord
 from Bio import pairwise2
 from Bio.SeqIO import QualityIO
 from Bio.Alphabet import SingleLetterAlphabet
@@ -380,6 +380,33 @@ def qualOnlyWorker(sequence, qual, conf):
     conn.close()
     return
 
+class Record():
+    """The top-level hierarchy for linkers.py"""
+    def __init__(self, sequence):
+        assert isinstance(sequence,SeqRecord), \
+            'The Record class must be instantiated with a BioPython Seq object'
+        self.unmod              = sequence # a biopython sequence object
+        self.sequence           = None
+        self.nCount             = None
+        self.mid                = None
+        self.mid_seq            = None
+        #self.trimmed        = None
+        self.reverse_mid        = None
+        self.seq_match          = None
+        self.m_type             = None
+        self.l_seq              = None
+        self.l_tag              = None
+        #self.l_trimmed      = None
+        self.l_seq_match        = None
+        self.l_critter          = None
+        self.l_m_type           = None
+        self.reverse_linker     = None
+        self.concat_tag         = None
+        self.concat_type        = None
+        self.concat_seq_type    = None
+        self.concat_count       = None
+        self.concat_seq_match   = None
+
 def linkerWorker(sequence, qual, tags, all_tags, all_tags_regex, reverse_mid, reverse_linkers, conf, doMidTrim, doLinkerTrim):
     # we need a separate connection for each mysql cursor or they are going
     # start going into locking hell and things will go poorly. Creating a new 
@@ -390,38 +417,51 @@ def linkerWorker(sequence, qual, tags, all_tags, all_tags_regex, reverse_mid, re
         passwd=conf.get('Database','PASSWORD'), 
         db=conf.get('Database','DATABASE'))
     cur = conn.cursor()
+    # for now, we'll keep this here
+    seqRecord = Record(sequence)
     # convert low-scoring bases to 'N'
     untrimmed_len = len(sequence.seq)
-    qual_trimmed = qualTrimming(sequence, qual)
-    N_count = str(qual_trimmed.seq).count('N')
-    pdb.set_trace()
-    if doMidTrim and doLinkerTrim:
+    if conf.getboolean('Steps', 'Trim'):
+        seqRecord.sequence = qualTrimming(seqRecord.unmod, qual)
+    else:
+        seqRecord.sequence = seqRecord.unmod
+    seqRecord.nCount = str(seqRecord.sequence.seq).count('N')
+    #pdb.set_trace()
+    if doMidTrim:
         # search on 5' (left) end for MID
-        mid = midTrim(qual_trimmed, tags, fuzzy=True)
+        mid = midTrim(seqRecord.sequence, tags, fuzzy=True)
         if mid:
             # if MID, search for exact matches (for and revcomp) on Linker
             # provided no exact matches, use fuzzy matching (Smith-Waterman) +
             # error correction to find Linker
-            mid, trimmed, seq_match, m_type = mid
-            linker = linkerTrim(trimmed, tags[mid], fuzzy=True)
-            if linker:
-                l_tag, l_trimmed, l_seq_match, l_critter, l_m_type = linker
-            else:
-                l_tag, l_trimmed, l_seq_match, l_critter, l_m_type, concat_type, \
-                concat_count = (None,) * 7
-        else:
-            mid, trimmed, seq_match, m_type = (None,) * 4
-            l_tag, l_trimmed, l_seq_match, l_critter, l_m_type, concat_type, \
-            concat_count = (None,) * 7
+            seqRecord.mid           = mid[0]
+            seqRecord.sequence      = mid[1]
+            seqRecord.seq_match     = mid[2]
+            seqRecord.m_type        = mid[3]
+            seqRecord.reverse_mid   = reverse_mid[seqRecord.mid]
+            tags = tags[mid]
+            #linker = linkerTrim(trimmed, tags[mid], fuzzy=True)
+            #if linker:
+            #    l_tag, l_trimmed, l_seq_match, l_critter, l_m_type = linker
+            #else:
+            #    l_tag, l_trimmed, l_seq_match, l_critter, l_m_type, concat_type, \
+            #    concat_count = (None,) * 7
+        #else:
+            #mid, trimmed, seq_match, m_type = (None,) * 4
+            #l_tag, l_trimmed, l_seq_match, l_critter, l_m_type, concat_type, \
+            #concat_count = (None,) * 7
             
-    elif not doMidTrim and doLinkerTrim:
-        mid, trimmed, seq_match, m_type = (None,) * 4
-        linker = linkerTrim(qual_trimmed, tags, fuzzy=True)
+    if doLinkerTrim:
+        #mid, trimmed, seq_match, m_type = (None,) * 4
+        linker = linkerTrim(seqRecord.sequence, tags, fuzzy=True)
         if linker:
-            l_tag, l_trimmed, l_seq_match, l_critter, l_m_type = linker
-        else:
-            l_tag, l_trimmed, l_seq_match, l_critter, l_m_type, concat_type, \
-            concat_count = (None,) * 7
+            seqRecord.l_tag         = linker[0]
+            seqRecord.sequence      = linker[1]
+            seqRecord.l_seq_match   = linker[2]
+            seqRecord.l_critter     = linker[3]
+            seqRecord.l_m_type      = linker[4]
+            seqRecord.reverse_linker = reverse_linkers[seqRecord.l_tag]
+    
     elif doMidTrim and not doLinkerTrim:
         pass
     #TODO:  Add length parameters
@@ -437,23 +477,23 @@ def linkerWorker(sequence, qual, tags, all_tags, all_tags_regex, reverse_mid, re
     else:
         concat_tag, concat_type, concat_seq_match = None, None, None
     # if we are able to trim the linker
-    if l_trimmed:
-        sequence = l_trimmed
+    #if l_trimmed:
+    #    sequence = l_trimmed
     # if we are able to trim the MID
-    elif trimmed:
-        sequence = trimmed
+    #elif trimmed:
+    #    sequence = trimmed
     # pickle the sequence record, so we can store it as a BLOB in MySQL, we
     # can thus recurrect it as a sequence object when we need it next.
-    sequence_pickle = cPickle.dumps(sequence,1)
+    sequence_pickle = cPickle.dumps(seqRecord.sequence,1)
     cur.execute('''INSERT INTO sequence (name, mid, mid_seq, mid_match, 
         mid_method, linker, linker_seq, linker_match, linker_method, cluster, 
         concat_seq, concat_match, concat_method, n_count, untrimmed_len, 
         seq_trimmed, trimmed_len, record) 
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''', 
-        (sequence.id, reverse_mid[mid], mid, seq_match, m_type, 
-        reverse_linkers[l_tag], l_tag, l_seq_match, l_m_type, l_critter, 
-        concat_tag, concat_seq_match, concat_type, N_count, untrimmed_len,
-        sequence.seq, len(sequence.seq), sequence_pickle))
+        (seqRecord.sequence.id, seqRecord.reverse_mid, seqRecord.mid, seqRecord.seq_match, seqRecord.m_type, 
+        seqRecord.reverse_linker, seqRecord.l_tag, seqRecord.l_seq_match, seqRecord.l_m_type, seqRecord.l_critter, 
+        seqRecord.concat_tag, seqRecord.concat_seq_match, seqRecord.concat_type, seqRecord.nCount, len(seqRecord.unmod.seq),
+        sequence.seq, len(seqRecord.sequence.seq), sequence_pickle))
     #pdb.set_trace()
     cur.close()
     conn.commit()
