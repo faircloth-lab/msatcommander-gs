@@ -79,7 +79,7 @@ def trim(sequence, left=None, right=None):
 def matches(tag, seq_match_span, tag_match_span, allowed_errors):
     '''Determine the gap/error counts for a particular match'''
     # deal with case where tag match might be perfect, but extremely gappy, 
-    #e.g. ACGTCGTGCGGA-------------------------ATC
+    # e.g. ACGTCGTGCGGA-------------------------ATC
     if tag_match_span.count('-') > allowed_errors or seq_match_span.count('-')\
      > allowed_errors:
         return 0, 0
@@ -89,7 +89,7 @@ def matches(tag, seq_match_span, tag_match_span, allowed_errors):
         numpy.array(list(tag_match_span))
         matches = sum(seq_array == tag_array)
         error = sum(seq_array != tag_array) + (len(tag) - \
-        len(tag_match_span.replace('-','')))
+            len(tag_match_span.replace('-','')))
         # Original scoring method from 
         # http://github.com/chapmanb/bcbb/tree/master treats gaps incorrectly:
         #return sum((1 if s == tag_match_span[i] else 0) for i, s in 
@@ -167,7 +167,7 @@ def SWMatchPos(seq_match_span, start, stop):
     return start, stop
 
 def leftLinker(s, tags, max_gap_char, gaps=False, **kwargs):
-    '''Mathing methods for left linker - regex first, followed by fuzzy (SW)
+    '''Matching methods for left linker - regex first, followed by fuzzy (SW)
     alignment, if the option is passed'''
     for tag in tags:
         if gaps:
@@ -230,8 +230,6 @@ def rightLinker(s, tags, max_gap_char, gaps=False, **kwargs):
 def linkerTrim(sequence, tags, max_gap_char=22, **kwargs):
     '''Use regular expression and (optionally) fuzzy string matching
     to locate and trim linkers from sequences'''
-    #if sequence.id == 'FX5ZTWB02DOPOT':
-    #    pdb.set_trace()
     m_type  = False
     s       = str(sequence.seq)
     left    = leftLinker(s, tags, max_gap_char=22, fuzzy=kwargs['fuzzy'])
@@ -390,13 +388,11 @@ class Record():
         self.nCount             = None
         self.mid                = None
         self.mid_seq            = None
-        #self.trimmed        = None
         self.reverse_mid        = None
         self.seq_match          = None
         self.m_type             = None
         self.l_seq              = None
         self.l_tag              = None
-        #self.l_trimmed      = None
         self.l_seq_match        = None
         self.l_critter          = None
         self.l_m_type           = None
@@ -419,8 +415,6 @@ def linkerWorker(sequence, qual, tags, all_tags, all_tags_regex, reverse_mid, re
     cur = conn.cursor()
     # for now, we'll keep this here
     seqRecord = Record(sequence)
-    # convert low-scoring bases to 'N'
-    untrimmed_len = len(sequence.seq)
     if conf.getboolean('Steps', 'Trim'):
         seqRecord.sequence = qualTrimming(seqRecord.unmod, qual)
     else:
@@ -430,7 +424,7 @@ def linkerWorker(sequence, qual, tags, all_tags, all_tags_regex, reverse_mid, re
     if doMidTrim:
         # search on 5' (left) end for MID
         mid = midTrim(seqRecord.sequence, tags, fuzzy=True)
-        if mid:
+        if mid[0]:
             # if MID, search for exact matches (for and revcomp) on Linker
             # provided no exact matches, use fuzzy matching (Smith-Waterman) +
             # error correction to find Linker
@@ -439,33 +433,20 @@ def linkerWorker(sequence, qual, tags, all_tags, all_tags_regex, reverse_mid, re
             seqRecord.seq_match     = mid[2]
             seqRecord.m_type        = mid[3]
             seqRecord.reverse_mid   = reverse_mid[seqRecord.mid]
-            tags = tags[mid]
-            #linker = linkerTrim(trimmed, tags[mid], fuzzy=True)
-            #if linker:
-            #    l_tag, l_trimmed, l_seq_match, l_critter, l_m_type = linker
-            #else:
-            #    l_tag, l_trimmed, l_seq_match, l_critter, l_m_type, concat_type, \
-            #    concat_count = (None,) * 7
-        #else:
-            #mid, trimmed, seq_match, m_type = (None,) * 4
-            #l_tag, l_trimmed, l_seq_match, l_critter, l_m_type, concat_type, \
-            #concat_count = (None,) * 7
-            
+            tags                    = tags[seqRecord.mid]
     if doLinkerTrim:
-        #mid, trimmed, seq_match, m_type = (None,) * 4
-        linker = linkerTrim(seqRecord.sequence, tags, fuzzy=True)
+        linker = linkerTrim(seqRecord.sequence, tags, fuzzy=False)
         if linker:
-            seqRecord.l_tag         = linker[0]
-            seqRecord.sequence      = linker[1]
-            seqRecord.l_seq_match   = linker[2]
-            seqRecord.l_critter     = linker[3]
-            seqRecord.l_m_type      = linker[4]
-            seqRecord.reverse_linker = reverse_linkers[seqRecord.l_tag]
-    
-    elif doMidTrim and not doLinkerTrim:
-        pass
-    #TODO:  Add length parameters
-
+            if linker[0]:
+                seqRecord.l_tag             = linker[0]
+                seqRecord.sequence          = linker[1]
+                seqRecord.l_seq_match       = linker[2]
+                seqRecord.l_critter         = linker[3]
+                seqRecord.l_m_type          = linker[4]
+                seqRecord.reverse_linker    = reverse_linkers[seqRecord.l_tag]
+            # deal with tag-mismatch
+            if not linker[0] and linker[4]:
+                seqRecord.l_m_type          = linker[4]
     # check for concatemers
     concat_check = False
     if concat_check:
@@ -476,24 +457,21 @@ def linkerWorker(sequence, qual, tags, all_tags, all_tags_regex, reverse_mid, re
             concat_tag, concat_type, concat_seq_match = None, None, None
     else:
         concat_tag, concat_type, concat_seq_match = None, None, None
-    # if we are able to trim the linker
-    #if l_trimmed:
-    #    sequence = l_trimmed
-    # if we are able to trim the MID
-    #elif trimmed:
-    #    sequence = trimmed
     # pickle the sequence record, so we can store it as a BLOB in MySQL, we
-    # can thus recurrect it as a sequence object when we need it next.
+    # can thus resurrect it as a sequence object when we need it next.
     sequence_pickle = cPickle.dumps(seqRecord.sequence,1)
     cur.execute('''INSERT INTO sequence (name, mid, mid_seq, mid_match, 
         mid_method, linker, linker_seq, linker_match, linker_method, cluster, 
         concat_seq, concat_match, concat_method, n_count, untrimmed_len, 
         seq_trimmed, trimmed_len, record) 
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''', 
-        (seqRecord.sequence.id, seqRecord.reverse_mid, seqRecord.mid, seqRecord.seq_match, seqRecord.m_type, 
-        seqRecord.reverse_linker, seqRecord.l_tag, seqRecord.l_seq_match, seqRecord.l_m_type, seqRecord.l_critter, 
-        seqRecord.concat_tag, seqRecord.concat_seq_match, seqRecord.concat_type, seqRecord.nCount, len(seqRecord.unmod.seq),
-        sequence.seq, len(seqRecord.sequence.seq), sequence_pickle))
+        (seqRecord.sequence.id, seqRecord.reverse_mid, seqRecord.mid, \
+        seqRecord.seq_match, seqRecord.m_type, seqRecord.reverse_linker, \
+        seqRecord.l_tag, seqRecord.l_seq_match, seqRecord.l_m_type, \
+        seqRecord.l_critter, seqRecord.concat_tag, \
+        seqRecord.concat_seq_match, seqRecord.concat_type, seqRecord.nCount, \
+        len(seqRecord.unmod.seq), sequence.seq, len(seqRecord.sequence.seq), \
+        sequence_pickle))
     #pdb.set_trace()
     cur.close()
     conn.commit()
@@ -512,7 +490,7 @@ def motd():
     # - sequence pooling                                         #
     # - primer design                                            #
     #                                                            #
-    # Copyright (c) 2009 Brant C. Faircloth & Travis C. Glenn    #
+    # Copyright (c) 2010 Brant C. Faircloth                      #
     ##############################################################\n
     '''
     print motd
@@ -539,21 +517,21 @@ metavar='FILE')
 
 def main():
     '''Main loop'''
-    start_time = time.time()
-    options, arg = interface()
+    start_time      = time.time()
+    options, arg    = interface()
     motd()
     print 'Started: ', time.strftime("%a %b %d, %Y  %H:%M:%S", time.localtime(start_time))
-    conf = ConfigParser.ConfigParser()
+    conf            = ConfigParser.ConfigParser()
     conf.read(options.conf)
     conn = MySQLdb.connect(user=conf.get('Database','USER'), 
         passwd=conf.get('Database','PASSWORD'), 
         db=conf.get('Database','DATABASE'))
     cur = conn.cursor()
     # TODO: deal with trimming or no trimming
-    qualTrim = conf.getboolean('Steps', 'Trim')
-    qual = conf.getint('Qual', 'MinScore')
-    midTrim = conf.getboolean('Steps','MidTrim')
-    linkerTrim = conf.getboolean('Steps', 'LinkerTrim')
+    qualTrim        = conf.getboolean('Steps', 'Trim')
+    qual            = conf.getint('Qual', 'MinScore')
+    midTrim         = conf.getboolean('Steps','MidTrim')
+    linkerTrim      = conf.getboolean('Steps', 'LinkerTrim')
     if not midTrim and not linkerTrim:
         createQualSeqTable(cur)
         conn.commit()
@@ -561,11 +539,11 @@ def main():
         pass
     elif not midTrim and linkerTrim:
         #pdb.set_trace()
-        mid             = None
-        reverse_mid     = None
-        linkers         = dict(conf.items('Linker'))
-        reverse_linkers = reverse(conf.items('Linker'))
-        reverse_linkers[None] = None
+        mid                     = None
+        reverse_mid             = None
+        linkers                 = dict(conf.items('Linker'))
+        reverse_linkers         = reverse(conf.items('Linker'))
+        reverse_linkers[None]   = None
         clust = conf.items('LinkerGroups')
         # build tag library 1X
         tags = tagLibrary(mid, linkers, clust)
@@ -578,8 +556,8 @@ def main():
         linkers, reverse_linkers = dict(conf.items('Linker')), reverse(conf.items('Linker'))
         #TODO:  Add levenshtein distance script to automagically determine
         #distance
-        reverse_mid[None] = None
-        reverse_linkers[None] = None
+        reverse_mid[None]       = None
+        reverse_linkers[None]   = None
         clust = conf.items('Clusters')
         # build tag library 1X
         tags = tagLibrary(mid, linkers, clust)
