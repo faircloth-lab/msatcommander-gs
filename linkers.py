@@ -66,15 +66,15 @@ def allPossibleTags(mids, linkers, clust):
         rat.append(re.compile('%s' % revComp(linkers[l])))
     return at, rat
             
-def trim(record, left=None, right=None):
+def trim(sequence, left=None, right=None):
     '''Trim a given sequence given left and right offsets'''
     if left and right:
-        record = record[left:right]
+        sequence = sequence[left:right]
     elif left:
-        record = record[left:]
+        sequence = sequence[left:]
     elif right:
-        record = record[:right]
-    return record
+        sequence = sequence[:right]
+    return sequence
 
 def matches(tag, seq_match_span, tag_match_span, allowed_errors):
     '''Determine the gap/error counts for a particular match'''
@@ -128,11 +128,11 @@ def smithWaterman(seq, tags, allowed_errors):
     else:
         return None
 
-def qualTrimming(record, min_score=10):
+def qualTrimming(sequence, min_score=10):
     '''Remove ambiguous bases from 5' and 3' sequence ends'''
-    s = str(record.seq)
+    s = str(sequence.seq)
     sl = list(s)
-    for q in enumerate(record.letter_annotations["phred_quality"]):
+    for q in enumerate(sequence.letter_annotations["phred_quality"]):
         if q[1] < min_score:
             sl[q[0]] = 'N'
     s = ''.join(sl)
@@ -143,16 +143,16 @@ def qualTrimming(record, min_score=10):
         left_trim = left_trim.end()
     if right_trim:
         right_trim = right_trim.end()
-    return trim(record, left_trim, right_trim)
+    return trim(sequence, left_trim, right_trim)
 
-def midTrim(record, tags, max_gap_char=22, **kwargs):
+def midTrim(sequence, tags, max_gap_char=22, **kwargs):
     '''Remove the MID tag from the sequence read'''
-    #if record.id == 'MID_No_Error_ATACGACGTA':
+    #if sequence.id == 'MID_No_Error_ATACGACGTA':
     #    pdb.set_trace()
-    s = str(record.seq)
+    s = str(sequence.seq)
     mid = leftLinker(s, tags, max_gap_char, True, fuzzy=kwargs['fuzzy'])
     if mid:
-        trimmed = trim(record, mid[3])
+        trimmed = trim(sequence, mid[3])
         tag, m_type, seq_match = mid[0], mid[1], mid[4]
         return tag, trimmed, seq_match, m_type
     else:
@@ -227,20 +227,20 @@ def rightLinker(s, tags, max_gap_char, gaps=False, **kwargs):
     else:
         return None
 
-def linkerTrim(record, tags, max_gap_char=22, **kwargs):
+def linkerTrim(sequence, tags, max_gap_char=22, **kwargs):
     '''Use regular expression and (optionally) fuzzy string matching
     to locate and trim linkers from sequences'''
-    #if record.id == 'FX5ZTWB02DOPOT':
+    #if sequence.id == 'FX5ZTWB02DOPOT':
     #    pdb.set_trace()
     m_type  = False
-    s       = str(record.seq)
+    s       = str(sequence.seq)
     left    = leftLinker(s, tags, max_gap_char=22, fuzzy=kwargs['fuzzy'])
     right   = rightLinker(s, tags, max_gap_char=22, fuzzy=kwargs['fuzzy'])
     if left and right and left[0] == right[0]:
         # we can have lots of conditional matches here
         if left[2] <= max_gap_char and right[2] >= (len(s) - (len(right[0]) +\
         max_gap_char)):
-            trimmed = trim(record, left[3], right[2])
+            trimmed = trim(sequence, left[3], right[2])
             # left and right are identical so largely pass back the left
             # info... except for m_type which can be a combination
             tag, m_type, seq_match = left[0], left[1]+'-'+right[1]+'-both', \
@@ -255,14 +255,14 @@ def linkerTrim(record, tags, max_gap_char=22, **kwargs):
             tag, m_type, seq_match = None, 'tag-mismatch', None
     elif left:
         if left[2] <= max_gap_char:
-            trimmed = trim(record, left[3])
+            trimmed = trim(sequence, left[3])
             tag, m_type, seq_match = left[0], left[1]+'-left', left[4]
         else:
             # flag
             pass
     elif right:
         if right[2] >= (len(s) - (len(right[0]) + max_gap_char)):
-            trimmed = trim(record, None, right[2])
+            trimmed = trim(sequence, None, right[2])
             tag, m_type, seq_match = right[0], right[1]+'-right', right[4]
         else:
             # flag
@@ -314,10 +314,10 @@ def createQualSeqTable(c):
         untrimmed_len MEDIUMINT UNSIGNED, seq_trimmed MEDIUMTEXT, trimmed_len 
         MEDIUMINT UNSIGNED, record MEDIUMBLOB, PRIMARY KEY (id)) ENGINE=InnoDB''')
 
-def concatCheck(record, all_tags, all_tags_regex, reverse_linkers, **kwargs):
+def concatCheck(sequence, all_tags, all_tags_regex, reverse_linkers, **kwargs):
     '''Check screened sequence for the presence of concatemers by scanning 
     for all possible tags - after the 5' and 3' tags have been removed'''
-    s = str(record.seq)
+    s = str(sequence.seq)
     m_type = None
     # do either/or to try and keep speed up, somewhat
     #if not kwargs['fuzzy']:
@@ -350,7 +350,7 @@ def sequenceCount(input):
     return lines
             
 
-def qualOnlyWorker(record, qual, conf):
+def qualOnlyWorker(sequence, qual, conf):
     # we need a separate connection for each mysql cursor or they are going
     # start going into locking hell and things will go poorly. Creating a new 
     # connection for each worker process is the easiest/laziest solution.
@@ -361,18 +361,18 @@ def qualOnlyWorker(record, qual, conf):
         db=conf.get('Database','DATABASE'))
     cur = conn.cursor()
     # convert low-scoring bases to 'N'
-    untrimmed_len = len(record.seq)
-    qual_trimmed = qualTrimming(record, qual)
+    untrimmed_len = len(sequence.seq)
+    qual_trimmed = qualTrimming(sequence, qual)
     N_count = str(qual_trimmed.seq).count('N')
-    record = qual_trimmed
+    sequence = qual_trimmed
     # pickle the sequence record, so we can store it as a BLOB in MySQL, we
     # can thus recurrect it as a sequence object when we need it next.
-    record_pickle = cPickle.dumps(record,1)
+    sequence_pickle = cPickle.dumps(sequence,1)
     cur.execute('''INSERT INTO sequence (name, n_count, untrimmed_len, 
         seq_trimmed, trimmed_len, record) 
         VALUES (%s,%s,%s,%s,%s,%s)''', 
-        (record.id, N_count, untrimmed_len, record.seq, len(record.seq), 
-        record_pickle))
+        (sequence.id, N_count, untrimmed_len, sequence.seq, len(sequence.seq), 
+        sequence_pickle))
     #pdb.set_trace()
     cur.close()
     conn.commit()
@@ -380,7 +380,7 @@ def qualOnlyWorker(record, qual, conf):
     conn.close()
     return
 
-def linkerWorker(record, qual, tags, all_tags, all_tags_regex, reverse_mid, reverse_linkers, conf, doMidTrim, doLinkerTrim):
+def linkerWorker(sequence, qual, tags, all_tags, all_tags_regex, reverse_mid, reverse_linkers, conf, doMidTrim, doLinkerTrim):
     # we need a separate connection for each mysql cursor or they are going
     # start going into locking hell and things will go poorly. Creating a new 
     # connection for each worker process is the easiest/laziest solution.
@@ -391,8 +391,8 @@ def linkerWorker(record, qual, tags, all_tags, all_tags_regex, reverse_mid, reve
         db=conf.get('Database','DATABASE'))
     cur = conn.cursor()
     # convert low-scoring bases to 'N'
-    untrimmed_len = len(record.seq)
-    qual_trimmed = qualTrimming(record, qual)
+    untrimmed_len = len(sequence.seq)
+    qual_trimmed = qualTrimming(sequence, qual)
     N_count = str(qual_trimmed.seq).count('N')
     pdb.set_trace()
     if doMidTrim and doLinkerTrim:
@@ -438,22 +438,22 @@ def linkerWorker(record, qual, tags, all_tags, all_tags_regex, reverse_mid, reve
         concat_tag, concat_type, concat_seq_match = None, None, None
     # if we are able to trim the linker
     if l_trimmed:
-        record = l_trimmed
+        sequence = l_trimmed
     # if we are able to trim the MID
     elif trimmed:
-        record = trimmed
+        sequence = trimmed
     # pickle the sequence record, so we can store it as a BLOB in MySQL, we
     # can thus recurrect it as a sequence object when we need it next.
-    record_pickle = cPickle.dumps(record,1)
+    sequence_pickle = cPickle.dumps(sequence,1)
     cur.execute('''INSERT INTO sequence (name, mid, mid_seq, mid_match, 
         mid_method, linker, linker_seq, linker_match, linker_method, cluster, 
         concat_seq, concat_match, concat_method, n_count, untrimmed_len, 
         seq_trimmed, trimmed_len, record) 
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''', 
-        (record.id, reverse_mid[mid], mid, seq_match, m_type, 
+        (sequence.id, reverse_mid[mid], mid, seq_match, m_type, 
         reverse_linkers[l_tag], l_tag, l_seq_match, l_m_type, l_critter, 
         concat_tag, concat_seq_match, concat_type, N_count, untrimmed_len,
-        record.seq, len(record.seq), record_pickle))
+        sequence.seq, len(sequence.seq), sequence_pickle))
     #pdb.set_trace()
     cur.close()
     conn.commit()
@@ -548,7 +548,7 @@ def main():
         createSeqTable(cur)
         conn.commit()
     seqcount = sequenceCount(conf.get('Input','sequence'))
-    record = QualityIO.PairedFastaQualIterator(
+    sequence = QualityIO.PairedFastaQualIterator(
     open(conf.get('Input','sequence'), "rU"), 
     open(conf.get('Input','qual'), "rU"))
     #pdb.set_trace()
@@ -568,14 +568,14 @@ def main():
             threads = []
             pb = progress.bar(0,seqcount,60)
             pb_inc = 0
-            while record:
+            while sequence:
                 if len(threads) < n_procs:
                     if qualTrim and not linkerTrim:
                         p = multiprocessing.Process(target=qualOnlyWorker, args=(
-                        record.next(), qual, conf))
+                        sequence.next(), qual, conf))
                     elif qualTrim and linkerTrim:
                         p = multiprocessing.Process(target=linkerWorker, args=(
-                        record.next(), qual, tags, all_tags, all_tags_regex, 
+                        sequence.next(), qual, tags, all_tags, all_tags_regex, 
                         reverse_mid, reverse_linkers, conf, midTrim, linkerTrim))
                     p.start()
                     threads.append(p)
@@ -597,12 +597,12 @@ def main():
             pb = progress.bar(0,seqcount,60)
             pb_inc = 0
             #while count < 1000:
-            while record:
+            while sequence:
                 #count +=1
                 if qualTrim and not linkerTrim:
-                    qualOnlyWorker(record.next(), qual, conf)
+                    qualOnlyWorker(sequence.next(), qual, conf)
                 elif qualTrim and linkerTrim:
-                    linkerWorker(record.next(), qual, tags, all_tags, 
+                    linkerWorker(sequence.next(), qual, tags, all_tags, 
                     all_tags_regex, reverse_mid, reverse_linkers, conf, midTrim, linkerTrim)
                 if (pb_inc+1)%1000 == 0:
                     pb.__call__(pb_inc+1)
