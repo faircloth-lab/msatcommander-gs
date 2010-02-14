@@ -72,38 +72,34 @@ def matches(tag, seq_match_span, tag_match_span, allowed_errors):
     '''Determine the gap/error counts for a particular match'''
     # deal with case where tag match might be perfect, but extremely gappy, 
     # e.g. ACGTCGTGCGGA-------------------------ATC
-    if tag_match_span.count('-') > allowed_errors or seq_match_span.count('-')\
-     > allowed_errors:
+    if tag_match_span.count('-') > allowed_errors or \
+        seq_match_span.count('-') > allowed_errors:
         return 0, 0
     else:
         #pdb.set_trace()
-        seq_array, tag_array = numpy.array(list(seq_match_span)), \
-        numpy.array(list(tag_match_span))
-        matches = sum(seq_array == tag_array)
-        error = sum(seq_array != tag_array) + (len(tag) - \
+        seq_array   = numpy.array(list(seq_match_span))
+        tag_array   = numpy.array(list(tag_match_span))
+        matches     = sum(seq_array == tag_array)
+        error       = sum(seq_array != tag_array) + (len(tag) - \
             len(tag_match_span.replace('-','')))
-        # Original scoring method from 
-        # http://github.com/chapmanb/bcbb/tree/master treats gaps incorrectly:
-        #return sum((1 if s == tag_match_span[i] else 0) for i, s in 
-        #enumerate(seq_match_span))
+        # I didn't like the way that the original method at
+        # http://github.com/chapmanb/bcbb/tree/master treats gaps 
         return matches, error
 
 def smithWaterman(seq, tags, allowed_errors):
     '''Smith-Waterman alignment method for aligning tags with their respective
-    sequences.  Only called when regular expression matching patterns fail.  
-    Borrowed & heavily modified from 
-    http://github.com/chapmanb/bcbb/tree/master'''
-    #if seq == 'CGAGAGATACAAAAGCAGCAGCGGAATCGATTCCGCTGCTGC':
-    #    pdb.set_trace()
+    sequences.  Only called when regular expression matching patterns fail.
+    Inspired by http://github.com/chapmanb/bcbb/tree/master'''
     high_score = {'tag':None, 'seq_match':None, 'mid_match':None, 'score':None, 
         'start':None, 'end':None, 'matches':None, 'errors':allowed_errors}
     for tag in tags:
         seq_match, tag_match, score, start, end = pairwise2.align.localms(seq, 
         tag, 5.0, -4.0, -9.0, -0.5, one_alignment_only=True)[0]
-        seq_match_span, tag_match_span = seq_match[start:end], tag_match[start:end]
-        match, errors = matches(tag, seq_match_span, tag_match_span, allowed_errors)
+        seq_match_span  = seq_match[start:end]
+        tag_match_span  = tag_match[start:end]
+        match, errors   = matches(tag, seq_match_span, tag_match_span, allowed_errors)
         if match >= len(tag)-allowed_errors and match > high_score['matches'] \
-        and errors <= high_score['errors']:
+            and errors <= high_score['errors']:
             high_score['tag'] = tag
             high_score['seq_match'] = seq_match
             high_score['tag_match'] = tag_match
