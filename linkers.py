@@ -381,7 +381,7 @@ def qualOnlyWorker(sequence, qual, conf):
     return
 
 class Record():
-    """The top-level hierarchy for linkers.py"""
+    '''Trimming, tag, and sequence data for individual reads'''
     def __init__(self, sequence):
         # super(Params, self).__init__()
         assert isinstance(sequence,SeqRecord), \
@@ -405,6 +405,9 @@ class Record():
         self.concat_seq_type    = None
         self.concat_count       = None
         self.concat_seq_match   = None
+    
+    def __repr__(self):
+        return '''<linkers.record for %s>''' % self.unmod.id
 
 def linkerWorker(sequence, params):
     # we need a separate connection for each mysql cursor or they are going
@@ -412,6 +415,7 @@ def linkerWorker(sequence, params):
     # connection for each worker process is the easiest/laziest solution.
     # Connection pooling (DB-API) didn't work so hot, but probably because 
     # I'm slightly retarded.
+    pdb.set_trace()
     conn = MySQLdb.connect(
         user=params.user,
         passwd=params.pwd,
@@ -522,7 +526,7 @@ metavar='FILE')
     return options, arg
 
 class Parameters():
-    """docstring for Params"""
+    '''linkers.py run parameters'''
     def __init__(self, conf):
         self.conf            = conf
         self.db              = self.conf.get('Database','DATABASE')
@@ -542,6 +546,9 @@ class Parameters():
         self.all_tags        = None
         self.all_tags_regex  = None
         self._setup()
+    
+    def __repr__(self):
+        return '''<linkers.parameters run values>'''
     
     def _setup(self):
         if self.midTrim and self.linkerTrim:
@@ -643,8 +650,7 @@ def main():
         # get num processors
         n_procs = conf.get('Multiprocessing','processors')
         if n_procs == 'Auto':
-            # TODO:  change this?
-            # we'll start 2X-1 threads (X = processors).
+            # we'll use x-1 cores (where x = avail. cores)
             n_procs = multiprocessing.cpu_count() - 1
         else:
             n_procs = int(n_procs)
@@ -657,16 +663,7 @@ def main():
             pb_inc = 0
             while sequence:
                 if len(threads) < n_procs:
-                    if params.qualTrim and not params.linkerTrim:
-                        p = multiprocessing.Process(
-                            target=qualOnlyWorker, 
-                            args=(
-                                sequence.next(),
-                                qual,
-                                )
-                            )
-                    elif params.qualTrim and params.linkerTrim:
-                        p = multiprocessing.Process(
+                    p = multiprocessing.Process(
                             target=linkerWorker, 
                             args=(
                                 sequence.next(),
@@ -695,10 +692,7 @@ def main():
             #while count < 1000:
             while sequence:
                 #count +=1
-                if params.qualTrim and not params.linkerTrim:
-                    qualOnlyWorker(sequence.next(), qual)
-                elif params.qualTrim or params.linkerTrim:
-                    linkerWorker(sequence.next(), params)
+                linkerWorker(sequence.next(), params)
                 if (pb_inc+1)%1000 == 0:
                     pb.__call__(pb_inc+1)
                 elif pb_inc + 1 == seqcount:
