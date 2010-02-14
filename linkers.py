@@ -26,46 +26,6 @@ def revCompTags(tags):
         revTags[revComp(tag)] = tags[tag]
     return revTags
 
-def tagLibrary(mids, linkers, clust):
-    '''Create a tag-library from the mids and the linkers which allows us to 
-    track which organisms go with which MID+linker combo'''
-    tl = {}
-    for c in clust:
-        if mids and linkers:
-            m,l = c[0].replace(' ','').split(',')
-            org = c[1]
-            if mids[m] not in tl.keys():
-                tl[mids[m]] = {linkers[l]:org}
-            else:
-                tl[mids[m]][linkers[l]] = org
-        elif not mids and linkers:
-            l = c[0]
-            org = c[1]
-            tl[linkers[l]] = org
-        elif mids and not linker:
-            pass
-    #pdb.set_trace()
-    return tl
-
-def allPossibleTags(mids, linkers, clust):
-    '''Create regular expressions for the forward and reverse complements
-    of all of the tags sequences used in a run'''
-    # at = all tags; rat = reverse complement all tags
-    at = []
-    rat = []
-    for c in clust:
-        if mids and linkers:
-            m,l = c[0].replace(' ','').split(',')
-        elif not mids and linkers:
-            l = c[0]
-        elif mids and not linkers:
-            pass
-        at.append(linkers[l])
-        rat.append(re.compile('%s' % linkers[l]))
-        at.append(revComp(linkers[l]))
-        rat.append(re.compile('%s' % revComp(linkers[l])))
-    return at, rat
-            
 def trim(sequence, left=None, right=None):
     '''Trim a given sequence given left and right offsets'''
     if left and right:
