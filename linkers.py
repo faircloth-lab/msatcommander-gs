@@ -145,7 +145,7 @@ def qualTrimming(sequence, min_score=10):
         right_trim = right_trim.end()
     return trim(sequence, left_trim, right_trim)
 
-def midTrim(sequence, tags, max_gap_char=22, **kwargs):
+def midTrim(sequence, tags, max_gap_char=5, **kwargs):
     '''Remove the MID tag from the sequence read'''
     #if sequence.id == 'MID_No_Error_ATACGACGTA':
     #    pdb.set_trace()
@@ -432,7 +432,7 @@ def linkerWorker(sequence, params):
     tags = params.tags
     if params.midTrim:
         # search on 5' (left) end for MID
-        mid = midTrim(seqRecord.sequence, params.tags, fuzzy=params.fuzzy)
+        mid = midTrim(seqRecord.sequence, params.tags, params.midGap, fuzzy=params.fuzzy)
         if mid:
             # if MID, search for exact matches (for and revcomp) on Linker
             # provided no exact matches, use fuzzy matching (Smith-Waterman) +
@@ -445,7 +445,7 @@ def linkerWorker(sequence, params):
             tags                    = params.tags[seqRecord.mid]
     #pdb.set_trace()
     if params.linkerTrim:
-        linker = linkerTrim(seqRecord.sequence, tags, fuzzy=params.fuzzy)
+        linker = linkerTrim(seqRecord.sequence, tags, params.linkerGap, fuzzy=params.fuzzy)
         if linker:
             if linker[0]:
                 seqRecord.l_tag             = linker[0]
@@ -492,14 +492,20 @@ def motd():
     '''Startup info'''
     motd = '''
     ##############################################################
-    #                     msatcommander 454                      #
+    #                     linkers.py                             #
+    # Provides:                                                  #
+    #   - parsing and error correction of hierarchically tagged  #
+    #     next generation sequence reads                         #
     #                                                            #
-    # - parsing and error correction for sequence tagged primers #
-    # - microsatellite identification                            #
-    # - sequence pooling                                         #
-    # - primer design                                            #
+    # Part of mc454:                                             #
+    #   - parsing hierarchically tagged sequence reads           #
+    #   - microsatellite identification                          #
+    #   - sequence pooling/clustering                            #
+    #   - microsatellite primer design                           #
     #                                                            #
-    # Copyright (c) 2010 Brant C. Faircloth                      #
+    # Copyright (c) 2009-2010 Brant C. Faircloth                 #
+    # 621 Charles E. Young Drive                                 #
+    # University of California, Los Angeles, 90095, USA          #
     ##############################################################\n
     '''
     print motd
@@ -534,7 +540,9 @@ class Parameters():
         self.qualTrim        = self.conf.getboolean('Steps', 'Trim')
         self.minQual         = self.conf.getint('GeneralParameters', 'MinQualScore')
         self.midTrim         = self.conf.getboolean('Steps','MidTrim')
+        self.midGap          = self.conf.getint('GeneralParameters','MidGap')
         self.linkerTrim      = self.conf.getboolean('Steps', 'LinkerTrim')
+        self.linkerGap       = self.conf.getint('GeneralParameters','LinkerGap')
         self.concat          = self.conf.getboolean('GeneralParameters','CheckForConcatemers')
         self.fuzzy           = self.conf.getboolean('GeneralParameters','FuzzyMatching')
         self.mids            = None
@@ -576,8 +584,8 @@ class Parameters():
         self.reverse_linkers = reverse(self.conf.items('Linker'), True)
     
     def _mid(self):
-        self.mids            = dict(self.conf.items('MID'))
-        self.reverse_mid     = reverse(self.conf.items('MID'), True)
+        self.mids            = dict(self.conf.items('Mid'))
+        self.reverse_mid     = reverse(self.conf.items('Mid'), True)
     
     def _tagLibrary(self):
         '''Create a tag-library from the mids and the linkers which allows us to 
@@ -628,16 +636,14 @@ def main():
     print 'Started: ', time.strftime("%a %b %d, %Y  %H:%M:%S", time.localtime(start_time))
     conf            = ConfigParser.ConfigParser()
     conf.read(options.conf)
-    conn = MySQLdb.connect(
-        user=conf.get('Database','USER'),
-        passwd=conf.get('Database','PASSWORD'),
-        db=conf.get('Database','DATABASE')
-        )
     cur = conn.cursor()
     # build our configuration
     params = Parameters(conf)
-    # TODO: deal with no tags of any type
-    # TODO: deal with trimming or no trimming
+    conn = MySQLdb.connect(
+        user=params.user,
+        passwd=params.pwd,
+        db=params.db
+        )
     # crank out a new table for the data
     createSeqTable(cur)
     conn.commit()
