@@ -415,7 +415,6 @@ def linkerWorker(sequence, params):
     # connection for each worker process is the easiest/laziest solution.
     # Connection pooling (DB-API) didn't work so hot, but probably because 
     # I'm slightly retarded.
-    pdb.set_trace()
     conn = MySQLdb.connect(
         user=params.user,
         passwd=params.pwd,
@@ -433,7 +432,7 @@ def linkerWorker(sequence, params):
     tags = params.tags
     if params.midTrim:
         # search on 5' (left) end for MID
-        mid = midTrim(seqRecord.sequence, params.tags, fuzzy=True)
+        mid = midTrim(seqRecord.sequence, params.tags, fuzzy=params.fuzzy)
         if mid:
             # if MID, search for exact matches (for and revcomp) on Linker
             # provided no exact matches, use fuzzy matching (Smith-Waterman) +
@@ -446,7 +445,7 @@ def linkerWorker(sequence, params):
             tags                    = params.tags[seqRecord.mid]
     #pdb.set_trace()
     if params.linkerTrim:
-        linker = linkerTrim(seqRecord.sequence, tags, fuzzy=True)
+        linker = linkerTrim(seqRecord.sequence, tags, fuzzy=params.fuzzy)
         if linker:
             if linker[0]:
                 seqRecord.l_tag             = linker[0]
@@ -462,7 +461,7 @@ def linkerWorker(sequence, params):
     if params.concat:
         if l_trimmed and len(l_trimmed.seq) > 0:
             concat_tag, concat_type, concat_seq_match = concatCheck(l_trimmed, 
-                all_tags, all_tags_regex, reverse_linkers, fuzzy=True)
+                all_tags, all_tags_regex, reverse_linkers, fuzzy=params.fuzzy)
         else:
             concat_tag, concat_type, concat_seq_match = None, None, None
     else:
@@ -537,6 +536,7 @@ class Parameters():
         self.midTrim         = self.conf.getboolean('Steps','MidTrim')
         self.linkerTrim      = self.conf.getboolean('Steps', 'LinkerTrim')
         self.concat          = self.conf.getboolean('GeneralParameters','CheckForConcatemers')
+        self.fuzzy           = self.conf.getboolean('GeneralParameters','FuzzyMatching')
         self.mids            = None
         self.reverse_mid     = None
         self.linkers         = None
