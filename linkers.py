@@ -273,9 +273,11 @@ def linkerTrim(sequence, tags, max_gap_char=22, **kwargs):
     else:
         return None
 
-def reverse(items):
+def reverse(items, null=False):
     '''build a reverse dictionary from a list of tuples'''
     l = []
+    if null:
+        items += ((None, None),)
     for i in items:
         t = (i[1],i[0])
         l.append(t)
@@ -381,6 +383,7 @@ def qualOnlyWorker(sequence, qual, conf):
 class Record():
     """The top-level hierarchy for linkers.py"""
     def __init__(self, sequence):
+        # super(Params, self).__init__()
         assert isinstance(sequence,SeqRecord), \
             'The Record class must be instantiated with a BioPython Seq object'
         self.unmod              = sequence # a biopython sequence object
@@ -403,28 +406,31 @@ class Record():
         self.concat_count       = None
         self.concat_seq_match   = None
 
-def linkerWorker(sequence, qual, tags, all_tags, all_tags_regex, reverse_mid, reverse_linkers, conf, doMidTrim, doLinkerTrim):
+def linkerWorker(sequence, params):
     # we need a separate connection for each mysql cursor or they are going
     # start going into locking hell and things will go poorly. Creating a new 
     # connection for each worker process is the easiest/laziest solution.
     # Connection pooling (DB-API) didn't work so hot, but probably because 
     # I'm slightly retarded.
-    conn = MySQLdb.connect(user=conf.get('Database','USER'), 
-        passwd=conf.get('Database','PASSWORD'), 
-        db=conf.get('Database','DATABASE'))
+    conn = MySQLdb.connect(
+        user=params.user,
+        passwd=params.pwd,
+        db=params.db
+        )
     cur = conn.cursor()
     # for now, we'll keep this here
     seqRecord = Record(sequence)
-    if conf.getboolean('Steps', 'Trim'):
-        seqRecord.sequence = qualTrimming(seqRecord.unmod, qual)
+    if params.qualTrim:
+        seqRecord.sequence = qualTrimming(seqRecord.unmod, params.minQual)
     else:
         seqRecord.sequence = seqRecord.unmod
     seqRecord.nCount = str(seqRecord.sequence.seq).count('N')
     #pdb.set_trace()
-    if doMidTrim:
+    tags = params.tags
+    if params.midTrim:
         # search on 5' (left) end for MID
-        mid = midTrim(seqRecord.sequence, tags, fuzzy=True)
-        if mid[0]:
+        mid = midTrim(seqRecord.sequence, params.tags, fuzzy=True)
+        if mid:
             # if MID, search for exact matches (for and revcomp) on Linker
             # provided no exact matches, use fuzzy matching (Smith-Waterman) +
             # error correction to find Linker
@@ -432,10 +438,11 @@ def linkerWorker(sequence, qual, tags, all_tags, all_tags_regex, reverse_mid, re
             seqRecord.sequence      = mid[1]
             seqRecord.seq_match     = mid[2]
             seqRecord.m_type        = mid[3]
-            seqRecord.reverse_mid   = reverse_mid[seqRecord.mid]
-            tags                    = tags[seqRecord.mid]
-    if doLinkerTrim:
-        linker = linkerTrim(seqRecord.sequence, tags, fuzzy=False)
+            seqRecord.reverse_mid   = params.reverse_mid[seqRecord.mid]
+            tags                    = params.tags[seqRecord.mid]
+    #pdb.set_trace()
+    if params.linkerTrim:
+        linker = linkerTrim(seqRecord.sequence, tags, fuzzy=True)
         if linker:
             if linker[0]:
                 seqRecord.l_tag             = linker[0]
@@ -443,13 +450,12 @@ def linkerWorker(sequence, qual, tags, all_tags, all_tags_regex, reverse_mid, re
                 seqRecord.l_seq_match       = linker[2]
                 seqRecord.l_critter         = linker[3]
                 seqRecord.l_m_type          = linker[4]
-                seqRecord.reverse_linker    = reverse_linkers[seqRecord.l_tag]
+                seqRecord.reverse_linker    = params.reverse_linkers[seqRecord.l_tag]
             # deal with tag-mismatch
             if not linker[0] and linker[4]:
                 seqRecord.l_m_type          = linker[4]
     # check for concatemers
-    concat_check = False
-    if concat_check:
+    if params.concat:
         if l_trimmed and len(l_trimmed.seq) > 0:
             concat_tag, concat_type, concat_seq_match = concatCheck(l_trimmed, 
                 all_tags, all_tags_regex, reverse_linkers, fuzzy=True)
@@ -470,8 +476,8 @@ def linkerWorker(sequence, qual, tags, all_tags, all_tags_regex, reverse_mid, re
         seqRecord.l_tag, seqRecord.l_seq_match, seqRecord.l_m_type, \
         seqRecord.l_critter, seqRecord.concat_tag, \
         seqRecord.concat_seq_match, seqRecord.concat_type, seqRecord.nCount, \
-        len(seqRecord.unmod.seq), sequence.seq, len(seqRecord.sequence.seq), \
-        sequence_pickle))
+        len(seqRecord.unmod.seq), seqRecord.sequence.seq, \
+        len(seqRecord.sequence.seq), sequence_pickle))
     #pdb.set_trace()
     cur.close()
     conn.commit()
@@ -515,6 +521,98 @@ metavar='FILE')
         sys.exit(2)
     return options, arg
 
+class Parameters():
+    """docstring for Params"""
+    def __init__(self, conf):
+        self.conf            = conf
+        self.db              = self.conf.get('Database','DATABASE')
+        self.user            = self.conf.get('Database','USER')
+        self.pwd             = self.conf.get('Database','PASSWORD')
+        self.qualTrim        = self.conf.getboolean('Steps', 'Trim')
+        self.minQual         = self.conf.getint('GeneralParameters', 'MinQualScore')
+        self.midTrim         = self.conf.getboolean('Steps','MidTrim')
+        self.linkerTrim      = self.conf.getboolean('Steps', 'LinkerTrim')
+        self.concat          = self.conf.getboolean('GeneralParameters','CheckForConcatemers')
+        self.mids            = None
+        self.reverse_mid     = None
+        self.linkers         = None
+        self.reverse_linkers = None
+        self.clust           = None
+        self.tags            = None
+        self.all_tags        = None
+        self.all_tags_regex  = None
+        self._setup()
+    
+    def _setup(self):
+        if self.midTrim and self.linkerTrim:
+            self._mid()
+            self._linkers()
+            self.clust       = self.conf.items('MidLinkerGroups')
+            self._tagLibrary()
+
+        elif self.midTrim and not self.LinkerTrim:
+            self_mid()
+            self.clust       = self.conf.items('MidGroup')
+            self._tagLibrary()
+            
+        elif not self.midTrim and self.linkerTrim:
+            self._linkers()
+            self.clust       = self.conf.items('LinkerGroups')
+            self._tagLibrary()
+            
+        # do we check for concatemers?
+        if self.concat:
+            self._allPossibleTags()
+    
+    def _linkers(self):
+        self.linkers         = dict(self.conf.items('Linker'))
+        self.reverse_linkers = reverse(self.conf.items('Linker'), True)
+    
+    def _mid(self):
+        self.mids            = dict(self.conf.items('MID'))
+        self.reverse_mid     = reverse(self.conf.items('MID'), True)
+    
+    def _tagLibrary(self):
+        '''Create a tag-library from the mids and the linkers which allows us to 
+        track which organisms go with which MID+linker combo'''
+        self.tags = {}
+        for c in self.clust:
+            if self.mids and self.linkers:
+                m,l = c[0].replace(' ','').split(',')
+                org = c[1]
+                if self.mids[m] not in self.tags.keys():
+                    self.tags[self.mids[m]] = {self.linkers[l]:org}
+                else:
+                    self.tags[self.mids[m]][self.linkers[l]] = org
+            
+            elif not self.mids and self.linkers:
+                l = c[0]
+                org = c[1]
+                self.tags[self.linkers[l]] = org
+            
+            elif self.mids and not self.linker:
+                l = c[0]
+                org = c[1]
+                self.tags[self.mids[l]] = org
+    
+    def _allPossibleTags(self):
+        '''Create regular expressions for the forward and reverse complements
+        of all of the tags sequences used in a run'''
+        # at = all tags; rat = reverse complement all tags
+        self.all_tags = []
+        self.all_tags_regex = []
+        for c in self.clust:
+            if self.mids and self.linkers:
+                m,l = c[0].replace(' ','').split(',')
+            elif not self.mids and self.linkers:
+                l = c[0]
+            elif self.mids and not self.linkers:
+                pass
+            all_tags.append(self.linkers[l])
+            all_tags_regex.append(re.compile('%s' % self.linkers[l]))
+            all_tags.append(revComp(self.linkers[l]))
+            all_tags_regex.append(re.compile('%s' % revComp(self.linkers[l])))
+
 def main():
     '''Main loop'''
     start_time      = time.time()
@@ -523,48 +621,19 @@ def main():
     print 'Started: ', time.strftime("%a %b %d, %Y  %H:%M:%S", time.localtime(start_time))
     conf            = ConfigParser.ConfigParser()
     conf.read(options.conf)
-    conn = MySQLdb.connect(user=conf.get('Database','USER'), 
-        passwd=conf.get('Database','PASSWORD'), 
-        db=conf.get('Database','DATABASE'))
+    conn = MySQLdb.connect(
+        user=conf.get('Database','USER'),
+        passwd=conf.get('Database','PASSWORD'),
+        db=conf.get('Database','DATABASE')
+        )
     cur = conn.cursor()
+    # build our configuration
+    params = Parameters(conf)
+    # TODO: deal with no tags of any type
     # TODO: deal with trimming or no trimming
-    qualTrim        = conf.getboolean('Steps', 'Trim')
-    qual            = conf.getint('Qual', 'MinScore')
-    midTrim         = conf.getboolean('Steps','MidTrim')
-    linkerTrim      = conf.getboolean('Steps', 'LinkerTrim')
-    if not midTrim and not linkerTrim:
-        createQualSeqTable(cur)
-        conn.commit()
-    elif midTrim and not linkerTrim:
-        pass
-    elif not midTrim and linkerTrim:
-        #pdb.set_trace()
-        mid                     = None
-        reverse_mid             = None
-        linkers                 = dict(conf.items('Linker'))
-        reverse_linkers         = reverse(conf.items('Linker'))
-        reverse_linkers[None]   = None
-        clust = conf.items('LinkerGroups')
-        # build tag library 1X
-        tags = tagLibrary(mid, linkers, clust)
-        all_tags, all_tags_regex = allPossibleTags(mid, linkers, clust)
-        # crank out a new table for the data
-        createSeqTable(cur)
-        conn.commit()
-    elif qualTrim and linkerTrim:
-        mid, reverse_mid = dict(conf.items('MID')), reverse(conf.items('MID'))
-        linkers, reverse_linkers = dict(conf.items('Linker')), reverse(conf.items('Linker'))
-        #TODO:  Add levenshtein distance script to automagically determine
-        #distance
-        reverse_mid[None]       = None
-        reverse_linkers[None]   = None
-        clust = conf.items('Clusters')
-        # build tag library 1X
-        tags = tagLibrary(mid, linkers, clust)
-        all_tags, all_tags_regex = allPossibleTags(mid, linkers, clust)
-        # crank out a new table for the data
-        createSeqTable(cur)
-        conn.commit()
+    # crank out a new table for the data
+    createSeqTable(cur)
+    conn.commit()
     seqcount = sequenceCount(conf.get('Input','sequence'))
     sequence = QualityIO.PairedFastaQualIterator(
     open(conf.get('Input','sequence'), "rU"), 
@@ -588,13 +657,22 @@ def main():
             pb_inc = 0
             while sequence:
                 if len(threads) < n_procs:
-                    if qualTrim and not linkerTrim:
-                        p = multiprocessing.Process(target=qualOnlyWorker, args=(
-                        sequence.next(), qual, conf))
-                    elif qualTrim and linkerTrim:
-                        p = multiprocessing.Process(target=linkerWorker, args=(
-                        sequence.next(), qual, tags, all_tags, all_tags_regex, 
-                        reverse_mid, reverse_linkers, conf, midTrim, linkerTrim))
+                    if params.qualTrim and not params.linkerTrim:
+                        p = multiprocessing.Process(
+                            target=qualOnlyWorker, 
+                            args=(
+                                sequence.next(),
+                                qual,
+                                )
+                            )
+                    elif params.qualTrim and params.linkerTrim:
+                        p = multiprocessing.Process(
+                            target=linkerWorker, 
+                            args=(
+                                sequence.next(),
+                                params,
+                                )
+                            )
                     p.start()
                     threads.append(p)
                     if (pb_inc+1)%1000 == 0:
@@ -617,11 +695,10 @@ def main():
             #while count < 1000:
             while sequence:
                 #count +=1
-                if qualTrim and not linkerTrim:
-                    qualOnlyWorker(sequence.next(), qual, conf)
-                elif qualTrim and linkerTrim:
-                    linkerWorker(sequence.next(), qual, tags, all_tags, 
-                    all_tags_regex, reverse_mid, reverse_linkers, conf, midTrim, linkerTrim)
+                if params.qualTrim and not params.linkerTrim:
+                    qualOnlyWorker(sequence.next(), qual)
+                elif params.qualTrim or params.linkerTrim:
+                    linkerWorker(sequence.next(), params)
                 if (pb_inc+1)%1000 == 0:
                     pb.__call__(pb_inc+1)
                 elif pb_inc + 1 == seqcount:
