@@ -1,10 +1,20 @@
 #!/usr/bin/env python
 # encoding: utf-8
 """
-main.py
+linkers.py
 
-Created by Brant Faircloth on 2009-08-14.
-Copyright (c) 2009 Brant Faircloth. All rights reserved.
+Copyright (c) 2009-2010 Brant C. Faircloth.  All rights reserved.
+
+Provides:
+    - parsing and error correction of hierarchically tagged
+        next generation sequence reads
+
+Part of mc454:
+    - parsing hierarchically tagged sequence reads
+    - microsatellite identification
+    - sequence pooling/clustering
+    - microsatellite primer design
+
 """
 
 import os, sys, re, pdb, time, numpy, string, MySQLdb, ConfigParser, multiprocessing, cPickle, optparse, progress
@@ -12,6 +22,28 @@ from Bio.SeqRecord import SeqRecord
 from Bio import pairwise2
 from Bio.SeqIO import QualityIO
 from Bio.Alphabet import SingleLetterAlphabet
+
+def motd():
+    '''Startup info'''
+    motd = '''
+    ##############################################################
+    #                     linkers.py                             #
+    # Provides:                                                  #
+    #   - parsing and error correction of hierarchically tagged  #
+    #     next generation sequence reads                         #
+    #                                                            #
+    # Part of mc454:                                             #
+    #   - parsing hierarchically tagged sequence reads           #
+    #   - microsatellite identification                          #
+    #   - sequence pooling/clustering                            #
+    #   - microsatellite primer design                           #
+    #                                                            #
+    # Copyright (c) 2009-2010 Brant C. Faircloth                 #
+    # 621 Charles E. Young Drive                                 #
+    # University of California, Los Angeles, 90095, USA          #
+    ##############################################################\n
+    '''
+    print motd
 
 def revComp(seq):
     '''Return reverse complement of seq'''
@@ -448,27 +480,7 @@ def linkerWorker(sequence, params):
     conn.close()
     return
 
-def motd():
-    '''Startup info'''
-    motd = '''
-    ##############################################################
-    #                     linkers.py                             #
-    # Provides:                                                  #
-    #   - parsing and error correction of hierarchically tagged  #
-    #     next generation sequence reads                         #
-    #                                                            #
-    # Part of mc454:                                             #
-    #   - parsing hierarchically tagged sequence reads           #
-    #   - microsatellite identification                          #
-    #   - sequence pooling/clustering                            #
-    #   - microsatellite primer design                           #
-    #                                                            #
-    # Copyright (c) 2009-2010 Brant C. Faircloth                 #
-    # 621 Charles E. Young Drive                                 #
-    # University of California, Los Angeles, 90095, USA          #
-    ##############################################################\n
-    '''
-    print motd
+
 
 def interface():
     '''Command-line interface'''
@@ -596,7 +608,6 @@ def main():
     print 'Started: ', time.strftime("%a %b %d, %Y  %H:%M:%S", time.localtime(start_time))
     conf            = ConfigParser.ConfigParser()
     conf.read(options.conf)
-    cur = conn.cursor()
     # build our configuration
     params = Parameters(conf)
     conn = MySQLdb.connect(
@@ -604,6 +615,7 @@ def main():
         passwd=params.pwd,
         db=params.db
         )
+    cur = conn.cursor()
     # crank out a new table for the data
     createSeqTable(cur)
     conn.commit()
