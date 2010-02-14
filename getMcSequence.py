@@ -20,12 +20,20 @@ type='string', default = None, help='The path to the configuration file.', \
 metavar='FILE')
     p.add_option('--species', '-s', dest = 'species', action='store', \
 type='string', default = None, help='The species for which to grab sequence')
-    p.add_option('--trimmed', '-t', dest = 'trimmed', action='store', \
-type='string', default = 'False', help='Get trimmed sequence')
-    p.add_option('--msat', '-m', dest = 'msat', action='store', \
-type='string', default = 'False', help='Get trimmed sequence')
-    p.add_option('--all', '-a', dest = 'all', action='store', \
-type='string', default = 'False', help='Get all sequences')
+    p.add_option('--trimmed', '-t', dest = 'trimmed', action='store_true', \
+default = False, help='Get trimmed sequence')
+    p.add_option('--msat', '-m', dest = 'msat', action='store_true', \
+default = False, help='Get microsat containing sequence')
+#    p.add_option('--all', '-a', dest = 'all', action='store_true',\
+#default = False, help='Get all sequences')
+    p.add_option('--byspecies', '-b', dest = 'byspecies', action='store_true', \
+default = False, help='Get sequences by species')
+    p.add_option('--gigantic','-g', dest='gigantic', action='store_true', \
+default = False, help='Store all sequence in one big file')
+    p.add_option('--fasta', '-f', dest='fasta', action='store', \
+type='string', default = False, help='Elements you want in the fasta header\
+for each read - separate with a %sign.  Elements include cluster, \
+mid, name, id')
     (options,arg) = p.parse_args()
     if not options.conf:
         p.print_help()
@@ -71,16 +79,50 @@ def trimmed(cur, conf, species, msat, sequence, qual):
     sequence.close()
 
 def main():
-    start_time = time.time()
-    options, arg = interface()
+    start_time      = time.time()
+    options, arg    = interface()
     print 'Started: ', time.strftime("%a %b %d, %Y  %H:%M:%S", time.localtime(start_time))
-    conf = ConfigParser.ConfigParser()
+    conf            = ConfigParser.ConfigParser()
     conf.read(options.conf)
-    conn = MySQLdb.connect(user=conf.get('Database','USER'), 
-        passwd=conf.get('Database','PASSWORD'), 
-        db=conf.get('Database','DATABASE'))
+    conn            = MySQLdb.connect(
+                      user=conf.get('Database','USER'),
+                      passwd=conf.get('Database','PASSWORD'),
+                      db=conf.get('Database','DATABASE')
+                      )
     cur = conn.cursor()
-    if options.all == 'True' and options.trimmed == 'True':
+    # get all sequences where cluster != null
+    # put them in monolithic file
+    # change the sequence header
+    if options.gigantic:
+        outfa       = open('monolithic_PARSED.fsa','w')
+        outqual     = open('monolithic_PARSED.qual','w')
+        if options.trimmed:
+            #pdb.set_trace() 
+            if options.fasta:
+                fs = options.fasta.split('%')
+                fs = ', '.join(fs)
+                query = '''SELECT %s, record FROM sequence WHERE cluster IS NOT NULL and trimmed_len > 0''' % fs
+                results = cur.execute(query)
+            else:
+                results = cur.execute('''SELECT record FROM sequence WHERE cluster IS NOT NULL and trimmed_len > 0''')
+            while 1:
+                result = cur.fetchone()
+                if not result:
+                    break
+                record = cPickle.loads(result[-1])
+                var = len(result) - 1
+                if options.fasta:
+                    record.id = '_'.join([str(i) for i in result[0:var]])
+                    record.name = ''
+                    record.description = ''
+                #pdb.set_trace()
+                outfa.write('%s' % record.format('fasta'))
+                outqual.write('%s' % record.format('qual'))
+
+        outfa.close()
+        outqual.close()
+    
+    elif options.all == 'True' and options.trimmed == 'True':
         # get all the cluster names from the dbase
         cur.execute('SELECT distinct(cluster) from sequence')
         clusters = cur.fetchall()
