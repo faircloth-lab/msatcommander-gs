@@ -89,6 +89,7 @@ def combineLoci(record, min_distance):
                 gs, ge = group[0][2], group[0][3]
                 gp, gf = group[0][4], group[0][5]
             name = ''
+            member_count = 0
             for pos,member in enumerate(group):
                 if pos + 1 < len(group):
                     dist = group[pos + 1][3] - group[pos][3]
@@ -99,7 +100,8 @@ def combineLoci(record, min_distance):
                 else:
                     spacer = ''
                 name += '%s(%s)%s' % (member[0], (member[3]-member[2])/len(member[0]), spacer)
-            record.combined[name] = (((gs, ge), gp, gf),)
+                member_count += 1
+            record.combined[name] = (((gs, ge), gp, gf, member_count),)
     return record
 
 def worker(id, record, motifs, conf):
@@ -129,9 +131,9 @@ def worker(id, record, motifs, conf):
         for combined in record.combined:
             for repeat in record.combined[combined]:
                 cur.execute('''INSERT INTO combined (id, motif, start, end, 
-                preceding, following) VALUES (%s, %s, %s, %s, %s, %s)
+                preceding, following, members) VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ''', (id, combined, repeat[0][0], repeat[0][1], repeat[1], 
-                repeat[2]))
+                repeat[2], repeat[3]))
     # update blob in 'main' table
     if record.matches:
         record_pickle = cPickle.dumps(record,1)
@@ -184,12 +186,18 @@ def createMaskTable(cur):
     except:
         pass
     # TODO:  Switch index to reference sequence.id versus autoincrement value and create an index on it
-    cur.execute('''CREATE TABLE mask (id INT UNSIGNED NOT NULL, 
-        name VARCHAR(100), motif VARCHAR(8), start 
-        MEDIUMINT UNSIGNED, end MEDIUMINT UNSIGNED, preceding MEDIUMINT 
-        UNSIGNED, following MEDIUMINT UNSIGNED, motif_count SMALLINT 
-        UNSIGNED, FOREIGN KEY (id) REFERENCES sequence (id), INDEX 
-        mask_name (name)) ENGINE=InnoDB''')
+    cur.execute('''CREATE TABLE mask (
+        id INT UNSIGNED NOT NULL, 
+        name VARCHAR(100), 
+        motif VARCHAR(8), start 
+        MEDIUMINT UNSIGNED, 
+        end MEDIUMINT UNSIGNED, 
+        preceding MEDIUMINT UNSIGNED, 
+        following MEDIUMINT UNSIGNED, 
+        motif_count SMALLINT UNSIGNED, 
+        INDEX (id),
+        INDEX (name),
+        FOREIGN KEY (id) REFERENCES sequence (id)) ENGINE=InnoDB''')
 
 def createCombinedLoci(cur):
     try:
@@ -204,8 +212,10 @@ def createCombinedLoci(cur):
         end MEDIUMINT UNSIGNED,
         preceding MEDIUMINT UNSIGNED,
         following MEDIUMINT UNSIGNED,
-        FOREIGN KEY (id) REFERENCES sequence (id) 
-        ) ENGINE=InnoDB''')
+        members SMALLINT UNSIGNED,
+        INDEX(id),
+        INDEX(members),
+        FOREIGN KEY (id) REFERENCES sequence (id)) ENGINE=InnoDB''')
 
 def updateSequenceTable(cur):
     # TODO:  This is dumb.  Just add the column in the linkers.py
