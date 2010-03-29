@@ -7,7 +7,7 @@ Created by Brant Faircloth on 2009-09-07.
 Copyright (c) 2009 Brant Faircloth. All rights reserved.
 """
 
-import os, sys, re, pdb, time, MySQLdb, ConfigParser, multiprocessing, cPickle, msat, new, numpy, progress, optparse
+import os, sys, re, pdb, time, MySQLdb, ConfigParser, multiprocessing, cPickle, msat, new, numpy, progress, optparse, operator
 import MySQLdb.cursors
 
 
@@ -46,11 +46,71 @@ def msatSearch(record, motifs):
         microsatellite(record, search)
     return record
 
+def combineLoci(record, min_distance):
+    '''combined adjacent loci - this is somewhat cumbersome due to the
+    format of the matches returned from msat (a dict with keys = motif).
+    Essentially, we are running a pairwise comparison across all motifs
+    located to determine which are within a predetermined distance from 
+    one another'''
+    record.combined = {}
+    if record.matches:
+        temp_combined = []
+        reorder = ()
+        # turn our dict into something more useful for this purpose
+        for motif in record.matches:
+            for pos,val in enumerate(record.matches[motif]):
+                reorder += ((motif, pos, val[0][0], val[0][1], val[1], val[2]),)
+        # sort it
+        reorder = sorted(reorder, key=operator.itemgetter(2))
+        # combine adjacent loci at < min_distance
+        for i in reorder:
+            included = False
+            if not temp_combined:
+                temp_combined.append([i])
+            else:
+                for gp, g in enumerate(temp_combined):
+                    for elem in g:
+                        if i[2] - elem[3] <= min_distance:
+                            temp_combined[gp].append(i)
+                            included = True
+                            break
+                if not included:
+                    temp_combined.append([i])
+        #if len(temp_combined[0]) > 1:
+        #    pdb.set_trace()
+        # re-key
+        for group in temp_combined:
+            if len(group) > 1:
+                gs = group[0][2]
+                ge = group[-1][2]
+                gp = group[0][4]
+                gf = group[-1][5]
+            else:
+                gs, ge = group[0][2], group[0][3]
+                gp, gf = group[0][4], group[0][5]
+            name = ''
+            for pos,member in enumerate(group):
+                if pos + 1 < len(group):
+                    dist = group[pos + 1][3] - group[pos][3]
+                    if dist > 1:
+                        spacer = '...'
+                    else:
+                        spacer = ''
+                else:
+                    spacer = ''
+                name += '%s(%s)%s' % (member[0], (member[3]-member[2])/len(member[0]), spacer)
+            record.combined[name] = (((gs, ge), gp, gf),)
+    return record
+
 def worker(id, record, motifs, conf):
     # find msats
     record = msatSearch(record, motifs)
     # mask msat sequence
     record = softmask(record)
+    # combined loci
+    if conf.getboolean('GeneralParameters', 'CombineLoci'):
+        record = combineLoci(record, conf.getint('GeneralParameters', 'CombineLociDist'))
+        #pdb.set_trace()
     # open connection to microsatellites table
     conn = MySQLdb.connect(user=conf.get('Database','USER'), 
         passwd=conf.get('Database','PASSWORD'), 
@@ -65,6 +125,13 @@ def worker(id, record, motifs, conf):
             preceding, following, motif_count) VALUES (%s, %s,%s,%s,%s,%s,%s,%s) 
             ''', (id, record.id, match, repeat[0][0], repeat[0][1], repeat[1], 
             repeat[2], motif_count))
+    if conf.getboolean('GeneralParameters', 'CombineLoci'):
+        for combined in record.combined:
+            for repeat in record.combined[combined]:
+                cur.execute('''INSERT INTO combined (id, motif, start, end, 
+                preceding, following) VALUES (%s, %s, %s, %s, %s, %s)
+                ''', (id, combined, repeat[0][0], repeat[0][1], repeat[1], 
+                repeat[2]))
     # update blob in 'main' table
     if record.matches:
         record_pickle = cPickle.dumps(record,1)
@@ -118,11 +185,27 @@ def createMaskTable(cur):
         pass
     # TODO:  Switch index to reference sequence.id versus autoincrement value and create an index on it
     cur.execute('''CREATE TABLE mask (id INT UNSIGNED NOT NULL, 
-            name VARCHAR(100), motif VARCHAR(8), start 
-            MEDIUMINT UNSIGNED, end MEDIUMINT UNSIGNED, preceding MEDIUMINT 
-            UNSIGNED, following MEDIUMINT UNSIGNED, motif_count SMALLINT 
-            UNSIGNED, FOREIGN KEY (id) REFERENCES sequence (id), INDEX 
-            mask_name (name)) ENGINE=InnoDB''')
+        name VARCHAR(100), motif VARCHAR(8), start 
+        MEDIUMINT UNSIGNED, end MEDIUMINT UNSIGNED, preceding MEDIUMINT 
+        UNSIGNED, following MEDIUMINT UNSIGNED, motif_count SMALLINT 
+        UNSIGNED, FOREIGN KEY (id) REFERENCES sequence (id), INDEX 
+        mask_name (name)) ENGINE=InnoDB''')
+
+def createCombinedLoci(cur):
+    try:
+        cur.execute('''DROP TABLE combined''')
+    except:
+        pass
+    # TODO:  Switch index to reference sequence.id versus autoincrement value and create an index on it
+    cur.execute('''CREATE TABLE combined (
+        id INT UNSIGNED NOT NULL, 
+        motif TEXT, 
+        start MEDIUMINT UNSIGNED, 
+        end MEDIUMINT UNSIGNED,
+        preceding MEDIUMINT UNSIGNED,
+        following MEDIUMINT UNSIGNED,
+        FOREIGN KEY (id) REFERENCES sequence (id) 
+        ) ENGINE=InnoDB''')
 
 def updateSequenceTable(cur):
     # TODO:  This is dumb.  Just add the column in the linkers.py
@@ -184,6 +267,8 @@ def main():
     cur = conn.cursor()
     createMaskTable(cur)
     updateSequenceTable(cur)
+    if conf.getboolean('GeneralParameters', 'CombineLoci'):
+        createCombinedLoci(cur)
     conn.commit()
     cur.execute('''SELECT id, record FROM sequence WHERE n_count <= 2 AND
     trimmed_len > 40''')
