@@ -7,8 +7,22 @@ Created by Brant Faircloth on 2009-09-07.
 Copyright (c) 2009 Brant Faircloth. All rights reserved.
 """
 
-import os, sys, re, pdb, time, MySQLdb, ConfigParser, multiprocessing, cPickle, msat, new, numpy, progress, optparse, operator
+import os
+import sys
+import re
+import pdb
+import time
+import MySQLdb
+import ConfigParser
+import multiprocessing
+import cPickle
+#import new
+import numpy
+import progress
+import optparse
+import operator
 import MySQLdb.cursors
+from modules import msat
 
 
 def softmask(record):
@@ -187,7 +201,7 @@ def createMaskTable(cur):
         pass
     # TODO:  Switch index to reference sequence.id versus autoincrement value and create an index on it
     cur.execute('''CREATE TABLE mask (
-        id INT UNSIGNED NOT NULL, 
+        id INT(10) UNSIGNED NOT NULL, 
         name VARCHAR(100), 
         motif VARCHAR(8), start 
         MEDIUMINT UNSIGNED, 
@@ -206,7 +220,7 @@ def createCombinedLoci(cur):
         pass
     # TODO:  Switch index to reference sequence.id versus autoincrement value and create an index on it
     cur.execute('''CREATE TABLE combined (
-        id INT UNSIGNED NOT NULL, 
+        id INT(10) UNSIGNED NOT NULL, 
         motif TEXT, 
         start MEDIUMINT UNSIGNED, 
         end MEDIUMINT UNSIGNED,
@@ -276,7 +290,7 @@ def main():
         db=conf.get('Database','DATABASE'))
     cur = conn.cursor()
     createMaskTable(cur)
-    updateSequenceTable(cur)
+    #updateSequenceTable(cur)
     if conf.getboolean('GeneralParameters', 'CombineLoci'):
         createCombinedLoci(cur)
     conn.commit()
