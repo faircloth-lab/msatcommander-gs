@@ -143,7 +143,7 @@ def worker(id, record, motifs, conf):
         for repeat in record.matches[match]:
             motif_count = (repeat[0][1] - repeat[0][0])/len(match)
             #pdb.set_trace()
-            cur.execute('''INSERT INTO mask (id, msat_id, name, motif, start, end, 
+            cur.execute('''INSERT INTO mask (sequence_id, id, name, motif, start, end, 
             preceding, following, motif_count) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) 
             ''', (id, msat_id, record.id, match, repeat[0][0], repeat[0][1], repeat[1], 
             repeat[2], motif_count))
@@ -154,12 +154,12 @@ def worker(id, record, motifs, conf):
         combined_id = 0
         for combined in record.combined:
             for repeat in record.combined[combined]:
-                cur.execute('''INSERT INTO combined (id, combined_id, motif, start, end, 
+                cur.execute('''INSERT INTO combined (sequence_id, id, motif, start, end, 
                 preceding, following, members) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ''', (id, combined_id, combined, repeat[0][0], repeat[0][1], repeat[1], 
                 repeat[2], repeat[3]))
                 for m in repeat[4]:
-                    cur.execute('''INSERT INTO combined_components (id, combined_id, motif, length) VALUES (%s, %s, %s, %s)''', (id, combined_id, m[0], m[1]))
+                    cur.execute('''INSERT INTO combined_components (sequence_id, combined_id, motif, length) VALUES (%s, %s, %s, %s)''', (id, combined_id, m[0], m[1]))
                 combined_id += 1
     # update blob in 'main' table
     if conf.getboolean('Tables', 'Sequence'):
@@ -215,8 +215,8 @@ def createMaskTableWithForeign(cur):
         pass
     # TODO:  Switch index to reference sequence.id versus autoincrement value and create an index on it
     cur.execute('''CREATE TABLE mask (
-        id INT(10) UNSIGNED NOT NULL, 
-        msat_id int(10) UNSIGNED NOT NULL,
+        sequence_id INT(10) UNSIGNED NOT NULL, 
+        id int(10) UNSIGNED NOT NULL,
         name VARCHAR(100), 
         motif VARCHAR(8), 
         start BIGINT UNSIGNED, 
@@ -224,10 +224,10 @@ def createMaskTableWithForeign(cur):
         preceding BIGINT UNSIGNED, 
         following BIGINT UNSIGNED, 
         motif_count MEDIUMINT UNSIGNED, 
+        INDEX (sequence_id),
         INDEX (id),
-        INDEX (msat_id),
         INDEX (name),
-        FOREIGN KEY (id) REFERENCES sequence (id)) ENGINE=InnoDB''')
+        FOREIGN KEY (sequence_id) REFERENCES sequence (id)) ENGINE=InnoDB''')
 
 def createMaskTableWithoutForeign(cur):
     try:
@@ -236,8 +236,8 @@ def createMaskTableWithoutForeign(cur):
         pass
     # TODO:  Switch index to reference sequence.id versus autoincrement value and create an index on it
     cur.execute('''CREATE TABLE mask (
-        id INT(10) UNSIGNED NOT NULL, 
-        msat_id int(10) UNSIGNED NOT NULL,
+        sequence_id INT(10) UNSIGNED NOT NULL, 
+        id int(10) UNSIGNED NOT NULL,
         name VARCHAR(100), 
         motif VARCHAR(8), 
         start BIGINT UNSIGNED, 
@@ -245,7 +245,7 @@ def createMaskTableWithoutForeign(cur):
         preceding BIGINT UNSIGNED, 
         following BIGINT UNSIGNED, 
         motif_count MEDIUMINT UNSIGNED, 
-        PRIMARY KEY (id, msat_id),
+        PRIMARY KEY (sequence_id, id),
         INDEX (name)) ENGINE=InnoDB''')
 
 def createCombinedLociWithForeign(cur):
@@ -255,8 +255,8 @@ def createCombinedLociWithForeign(cur):
         pass
     # TODO:  Switch index to reference sequence.id versus autoincrement value and create an index on it
     cur.execute('''CREATE TABLE combined (
-        id INT(10) UNSIGNED NOT NULL, 
-        combined_id int(10) UNSIGNED NOT NULL,
+        sequence_id INT(10) UNSIGNED NOT NULL, 
+        id int(10) UNSIGNED NOT NULL,
         motif TEXT, 
         start BIGINT UNSIGNED, 
         end BIGINT UNSIGNED,
@@ -264,9 +264,9 @@ def createCombinedLociWithForeign(cur):
         following BIGINT UNSIGNED,
         members MEDIUMINT UNSIGNED,
         INDEX(id),
-        PRIMARY KEY(combined_id),
+        PRIMARY KEY(id),
         INDEX(members),
-        FOREIGN KEY (id) REFERENCES sequence (id)) ENGINE=InnoDB''')
+        FOREIGN KEY (sequence_id) REFERENCES sequence (id)) ENGINE=InnoDB''')
     createCombinedComponentsTable(cur)
 
 def createCombinedLociWithoutForeign(cur):
@@ -280,15 +280,16 @@ def createCombinedLociWithoutForeign(cur):
         pass
     # TODO:  Switch index to reference sequence.id versus autoincrement value and create an index on it
     cur.execute('''CREATE TABLE combined (
-        id INT(10) UNSIGNED NOT NULL, 
-        combined_id int(10) UNSIGNED NOT NULL,
+        sequence_id INT(10) UNSIGNED NOT NULL, 
+        id int(10) UNSIGNED NOT NULL,
         motif TEXT, 
         start BIGINT UNSIGNED, 
         end BIGINT UNSIGNED,
         preceding BIGINT UNSIGNED,
         following BIGINT UNSIGNED,
         members MEDIUMINT UNSIGNED,
-        PRIMARY KEY (id, combined_id),
+        PRIMARY KEY (sequence_id, id),
+        INDEX(sequence_id),
         INDEX(id),
         INDEX(members)
         ) ENGINE=InnoDB''')
@@ -300,11 +301,11 @@ def createCombinedComponentsTable(cur):
     except:
         pass
     cur.execute('''CREATE TABLE combined_components (
-        id INT(10) UNSIGNED NOT NULL,
+        sequence_id INT(10) UNSIGNED NOT NULL,
         combined_id INT(10) UNSIGNED NOT NULL,
         motif TEXT,
         length MEDIUMINT UNSIGNED NOT NULL,
-        FOREIGN KEY (id, combined_id) REFERENCES combined (id, combined_id)
+        FOREIGN KEY (sequence_id, combined_id) REFERENCES combined (sequence_id, id)
         ) ENGINE=InnoDB''')
 
 
