@@ -121,36 +121,38 @@ def combineLoci(record, min_distance):
             record.combined[name] = (((gs, ge), gp, gf, member_count, motifs),)
     return record
 
-def worker(id, record, motifs, conf):
+def worker(id, record, motifs, db, have_sequence_table, combine_loci, combine_loci_dist):
     # find msats
     record = msatSearch(record, motifs)
-    # mask msat sequence
-    record = softmask(record)
+    # only mask msat sequence if we started with a sequence table
+    if have_sequence_table:
+        record = softmask(record)
     # combined loci
-    if conf.getboolean('GeneralParameters', 'CombineLoci'):
-        record = combineLoci(record, conf.getint('GeneralParameters', 'CombineLociDist'))
+    if combine_loci:
+        record = combineLoci(record, combine_loci_dist)
         #pdb.set_trace()
     # open connection to microsatellites table
-    conn = MySQLdb.connect(user=conf.get('Database','USER'), 
-        passwd=conf.get('Database','PASSWORD'), 
-        db=conf.get('Database','DATABASE'))
+    conn = MySQLdb.connect(user     = db[0], 
+                           passwd   = db[1], 
+                           db       = db[2]
+                           )
     cur = conn.cursor()
     # add new data for mask table (which = microsatellite repeats)
     # setup our own auto-incrementing index, so we can use value
-    # later
+    # later without multiprocessing causing us a problem
     msat_id = 0
     for match in record.matches:
         for repeat in record.matches[match]:
             motif_count = (repeat[0][1] - repeat[0][0])/len(match)
             #pdb.set_trace()
-            cur.execute('''INSERT INTO mask (sequence_id, id, name, motif, start, end, 
-            preceding, following, motif_count) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) 
-            ''', (id, msat_id, record.id, match, repeat[0][0], repeat[0][1], repeat[1], 
+            cur.execute('''INSERT INTO mask (sequence_id, id, motif, start, end, 
+            preceding, following, motif_count) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) 
+            ''', (id, msat_id, match, repeat[0][0], repeat[0][1], repeat[1], 
             repeat[2], motif_count))
             msat_id += 1
-    if conf.getboolean('GeneralParameters', 'CombineLoci'):
+    if combine_loci:
         # setup our own auto-incrementing index, so we can use value
-        # later
+        # later without multiprocessing causing us a problem
         combined_id = 0
         for combined in record.combined:
             for repeat in record.combined[combined]:
@@ -159,17 +161,22 @@ def worker(id, record, motifs, conf):
                 ''', (id, combined_id, combined, repeat[0][0], repeat[0][1], repeat[1], 
                 repeat[2], repeat[3]))
                 for m in repeat[4]:
-                    cur.execute('''INSERT INTO combined_components (sequence_id, combined_id, motif, length) VALUES (%s, %s, %s, %s)''', (id, combined_id, m[0], m[1]))
+                    cur.execute('''INSERT INTO combined_components 
+                        (sequence_id, combined_id, motif, length) VALUES 
+                        (%s, %s, %s, %s)''', (id, combined_id, m[0], m[1]))
                 combined_id += 1
     # update blob in 'main' table
-    if conf.getboolean('Tables', 'Sequence'):
+    if have_sequence_table:
         if record.matches:
             record_pickle = cPickle.dumps(record,1)
             # replace sequence with masked version in seq_trimmed - we can always
             # call UPPER() on it for non-masked version
-            cur.execute('''UPDATE sequence SET seq_trimmed = %s, record = %s, msat = %s WHERE id = %s''', (record.seq.masked, record_pickle, True, id))
+            cur.execute('''UPDATE sequence SET seq_trimmed = %s, 
+                record = %s, msat = %s WHERE id = %s''', 
+                (record.seq.masked, record_pickle, True, id))
         else:
-            cur.execute('''UPDATE sequence SET msat = %s WHERE id = %s''', (False, id))
+            cur.execute('''UPDATE sequence SET msat = %s WHERE id = %s''', 
+                (False, id))
     cur.close()
     conn.commit()
     conn.close()
@@ -208,6 +215,22 @@ def motifCollection(**kwargs):
         possible_motifs[scan][0], kwargs['perfect']),)
     return collection
 
+
+def createSequenceTable(cur):
+    """create a quasi-sequence table to hold identifying information for
+    each fasta or 2bit read - used only where SequenceTable = False"""
+    try:
+        cur.execute('''DROP TABLE sequence''')
+    except:
+        pass
+    cur.execute(''' CREATE TABLE sequence (
+    id int(10) unsigned NOT NULL,
+    name varchar(100) DEFAULT NULL,
+    PRIMARY KEY (id),
+    KEY name (name)
+    ) ENGINE=InnoDB''')
+    
+
 def createMaskTableWithForeign(cur):
     try:
         cur.execute('''DROP TABLE mask''')
@@ -216,37 +239,15 @@ def createMaskTableWithForeign(cur):
     # TODO:  Switch index to reference sequence.id versus autoincrement value and create an index on it
     cur.execute('''CREATE TABLE mask (
         sequence_id INT(10) UNSIGNED NOT NULL, 
-        id int(10) UNSIGNED NOT NULL,
-        name VARCHAR(100), 
+        id int(10) UNSIGNED NOT NULL, 
         motif VARCHAR(8), 
         start BIGINT UNSIGNED, 
         end BIGINT UNSIGNED, 
         preceding BIGINT UNSIGNED, 
         following BIGINT UNSIGNED, 
         motif_count MEDIUMINT UNSIGNED, 
-        INDEX (sequence_id),
-        INDEX (id),
-        INDEX (name),
+        PRIMARY KEY(sequence_id, id),
         FOREIGN KEY (sequence_id) REFERENCES sequence (id)) ENGINE=InnoDB''')
-
-def createMaskTableWithoutForeign(cur):
-    try:
-        cur.execute('''DROP TABLE mask''')
-    except:
-        pass
-    # TODO:  Switch index to reference sequence.id versus autoincrement value and create an index on it
-    cur.execute('''CREATE TABLE mask (
-        sequence_id INT(10) UNSIGNED NOT NULL, 
-        id int(10) UNSIGNED NOT NULL,
-        name VARCHAR(100), 
-        motif VARCHAR(8), 
-        start BIGINT UNSIGNED, 
-        end BIGINT UNSIGNED, 
-        preceding BIGINT UNSIGNED, 
-        following BIGINT UNSIGNED, 
-        motif_count MEDIUMINT UNSIGNED, 
-        PRIMARY KEY (sequence_id, id),
-        INDEX (name)) ENGINE=InnoDB''')
 
 def createCombinedLociWithForeign(cur):
     try:
@@ -263,36 +264,9 @@ def createCombinedLociWithForeign(cur):
         preceding BIGINT UNSIGNED,
         following BIGINT UNSIGNED,
         members MEDIUMINT UNSIGNED,
-        INDEX(id),
-        PRIMARY KEY(id),
+        PRIMARY KEY(sequence_id, id),
         INDEX(members),
         FOREIGN KEY (sequence_id) REFERENCES sequence (id)) ENGINE=InnoDB''')
-    createCombinedComponentsTable(cur)
-
-def createCombinedLociWithoutForeign(cur):
-    try:
-        cur.execute('''DROP TABLE combined_components''')
-    except:
-        pass
-    try:
-        cur.execute('''DROP TABLE combined''')
-    except:
-        pass
-    # TODO:  Switch index to reference sequence.id versus autoincrement value and create an index on it
-    cur.execute('''CREATE TABLE combined (
-        sequence_id INT(10) UNSIGNED NOT NULL, 
-        id int(10) UNSIGNED NOT NULL,
-        motif TEXT, 
-        start BIGINT UNSIGNED, 
-        end BIGINT UNSIGNED,
-        preceding BIGINT UNSIGNED,
-        following BIGINT UNSIGNED,
-        members MEDIUMINT UNSIGNED,
-        PRIMARY KEY (sequence_id, id),
-        INDEX(sequence_id),
-        INDEX(id),
-        INDEX(members)
-        ) ENGINE=InnoDB''')
     createCombinedComponentsTable(cur)
 
 def createCombinedComponentsTable(cur):
@@ -354,31 +328,55 @@ metavar='FILE')
 
 class Sequence():
     """docstring for Sequence"""
-    def __init__(self, data_type, **kwargs):
-        self.input = data_type
-        if data_type == 'mysql':
-            self.create_mysql_iterator()
-        elif data_type == 'fasta':
-            self.create_fasta_iterator(**kwargs)
+    def __init__(self, engine='mysql', **kwargs):
+        self.engine = engine
+        if self.engine == 'mysql':
+            self.create_mysql_iterator(**kwargs)
+        elif self.engine == 'biopython' and kwargs['data_type'] == 'fasta':
+            self.create_biopython_iterator(**kwargs)
+        elif self.engine == 'pyfasta' and kwargs['data_type'] == 'fasta':
+            self.create_pyfasta_iterator(**kwargs)
     
-    def get_sequence_count(self, input):
-        '''Determine the number of sequence reads in the input'''
-        handle = open(input, 'rU')
-        self.rowcount = handle.read().count('>')
-        handle.close()
+    def create_mysql_iterator(self, **kwargs):
+        cur = kwargs['cursor']
+        query = '''SELECT id, record FROM sequence WHERE n_count <= 2 AND 
+                    trimmed_len > 40'''
+        cur.execute(query)
+        self.readcount = cur.rowcount
+        self.read = iter(cur.fetchall())
     
-    def create_mysql_iterator(self):
-        self.row = cur.execute('''SELECT id, record FROM sequence WHERE n_count <= 2 AND
-                        trimmed_len > 40''')
-        self.rowcount = cur.rowcount
-    
-    def create_fasta_iterator(self, **kwargs):
+    def create_biopython_iterator(self, **kwargs):
         from Bio import SeqIO
-        self.get_sequence_count(kwargs['input'])
-        self.row = SeqIO.parse(open(kwargs['input'], 'rU'), 'fasta')
+        print "Generating BioPython sequence index.  This may take a moment...."
+        self.fasta = SeqIO.index(kwargs['input'], kwargs['data_type'])
+        self.readcount = len(self.fasta)
+        self.db_values = zip(range(len(self.fasta)), sorted(self.fasta.keys()))
+        self.read = iter(self.db_values)
     
     def create_twobit_iterator(self, **kwargs):
         pass
+    
+    def create_pyfasta_iterator(self, **kwargs):
+        from pyfasta import Fasta
+        print "Generating PyFasta sequence index.  This may take a moment...."
+        self.fasta = Fasta(kwargs['input'])
+        self.readcount = len(self.fasta)
+        self.db_values = zip(range(len(self.fasta)), sorted(self.fasta.keys()))
+        self.read = iter(self.db_values)
+
+class SequenceWrapper():
+    """this class wraps pyfasta objects to make them appear similar to 
+    biopython sequence records"""
+    def __init__(self, iden, sequence):
+        self.id = iden
+        self.seq = sequence
+
+def drop_old_tables(cur, have_sequence_table):
+    for t in ['combined_components', 'combined', 'mask']:
+        query = 'DROP TABLE IF EXISTS {0}'.format(t)
+        cur.execute(query)
+    if not have_sequence_table:
+        cur.execute('''DROP table IF EXISTS sequence''')
 
 def main():
     start_time = time.time()
@@ -387,28 +385,49 @@ def main():
     print 'Started: ', time.strftime("%a %b %d, %Y  %H:%M:%S", time.localtime(start_time))
     conf = ConfigParser.ConfigParser()
     conf.read(options.conf)
-    conn = MySQLdb.connect(user=conf.get('Database','USER'), 
-        passwd=conf.get('Database','PASSWORD'), 
-        db=conf.get('Database','DATABASE'))
+    # =============================================
+    # = Setup additional configuration parameters =
+    # =============================================
+    db = (conf.get('Database','USER'), 
+          conf.get('Database','PASSWORD'), 
+          conf.get('Database','DATABASE')
+          )
+    have_sequence_table = conf.getboolean('MicrosatelliteParameters', 'HaveSequenceTable')
+    fasta_engine = conf.get('MicrosatelliteParameters', 'FastaEngine').lower()
+    combine_loci = conf.getboolean('MicrosatelliteParameters', 'CombineLoci')
+    combine_loci_dist = conf.getint('MicrosatelliteParameters', 'CombineLociDist')
+    multiprocessing = conf.getboolean('Multiprocessing', 'MULTIPROCESSING')
+    get_num_procs = conf.get('Multiprocessing','processors')
+    
+    conn = MySQLdb.connect(user     = db[0],
+                           passwd   = db[1],
+                           db       = db[2]
+                           )
     cur = conn.cursor()
-    sequenceTable = conf.getboolean('Tables', 'Sequence')
-    #
-    if sequenceTable:
-        createMaskTableWithForeign(cur)
-        if conf.getboolean('GeneralParameters', 'CombineLoci'):
-            createCombinedLociWithForeign(cur)
+    # Drop old tables
+    drop_old_tables(cur, have_sequence_table)
+    if have_sequence_table:
+        data = Sequence(engine = 'mysql', cursor = cur)
     else:
-        createMaskTableWithoutForeign(cur)
-        if conf.getboolean('GeneralParameters', 'CombineLoci'):
-            createCombinedLociWithoutForeign(cur)
+        # create a quasi-sequence table
+        createSequenceTable(cur)
+        # get out data
+        data = Sequence(engine = fasta_engine, 
+            input = conf.get('Input','sequence'), 
+            data_type = 'fasta'
+            )
+        cur.executemany('''INSERT INTO sequence (id, name) VALUES (%s, %s)''', data.db_values)
+    # create our msat table
+    createMaskTableWithForeign(cur)
+    # create the combined msat table
+    if combine_loci:
+        createCombinedLociWithForeign(cur)
     conn.commit()
-    rows = Sequence('fasta', input = conf.get('Input','sequence'))
-    # setup motifs
     motifs = motifCollection(min_length = [10,6,4,4,4,4], scan_type = "2+", \
                 perfect = True)
-    if conf.getboolean('Multiprocessing', 'MULTIPROCESSING'):
+    if multiprocessing:
         # get num processors
-        n_procs = conf.get('Multiprocessing','processors')
+        n_procs = get_num_procs
         if n_procs == 'Auto':
             n_procs = multiprocessing.cpu_count() - 2
         else:
@@ -419,18 +438,30 @@ def main():
         threads = []
         # access the data on sequence by sequence basis to avoid reading the 
         # entire table contents into memory        
-        pb = progress.bar(0,rows.rowcount,60)
+        pb = progress.bar(0,data.readcount,60)
         pb_inc = 0
         try:
-            while rows:
+            while data:
                 if len(threads) < n_procs:
                     # convert BLOB back to sequence record
-                    if sequenceTable:
-                        data = rows.row.next()
-                        id, record = data[0], cPickle.loads(data[1])
-                    else:
-                        id, record = pb_inc, rows.row.next()
-                    p = multiprocessing.Process(target=worker, args=(id, record, motifs, conf))
+                    if data.engine == 'mysql':
+                        # convert BLOB back to sequence record
+                        record = data.read.next()
+                        iden = record[0]
+                        record = cPickle.loads(record[1])
+                    elif data.engine == 'pyfasta' or 'biopython':
+                        iden, chromo = data.read.next()
+                        #pdb.set_trace()
+                        record = SequenceWrapper(iden, data.fasta[chromo])
+                    p = multiprocessing.Process(target=worker, args=(
+                                    iden,
+                                    record,
+                                    motifs,
+                                    db,
+                                    have_sequence_table,
+                                    combine_loci, 
+                                    combine_loci_dist)
+                                    )
                     p.start()
                     threads.append(p)
                     if (pb_inc+1)%1000 == 0:
@@ -448,24 +479,29 @@ def main():
         print 'Not using multiprocessing\n'
         # access the data on sequence by sequence basis to avoid 
         # reading the entire table contents into memory
-        pb = progress.bar(0,rows.rowcount,60)
+        pb = progress.bar(0,data.readcount,60)
         pb_inc = 0
         #pdb.set_trace()
         try:
-            while rows:
-                if sequenceTable:
+            #pdb.set_trace()
+            while data:
+                if data.engine == 'mysql':
                     # convert BLOB back to sequence record
-                    data = rows.row.next()
-                    id, record = data[0], cPickle.loads(data[1])
-                else:
-                    id, record = pb_inc, rows.row.next()
-                #pdb.set_trace()
-                worker(id, record, motifs, conf)
-                break
+                    record = data.read.next()
+                    iden = record[0]
+                    record = cPickle.loads(record[1])
+                elif data.engine == 'pyfasta':
+                    iden, chromo = data.read.next()
+                    record = SequenceWrapper(iden, data.fasta[chromo])
+                elif data.engine == 'biopython':
+                    iden, chromo = data.read.next()
+                    record = data.fasta[chromo]
+                worker(iden, record, motifs, db, have_sequence_table,
+                        combine_loci, combine_loci_dist)
                 row = cur.fetchone()
                 if (pb_inc+1)%1000 == 0:
                     pb.__call__(pb_inc+1)
-                elif pb_inc + 1 == rows.rowcount:
+                elif pb_inc + 1 == data.readcount:
                     pb.__call__(pb_inc+1)
                 pb_inc += 1
         except StopIteration:
