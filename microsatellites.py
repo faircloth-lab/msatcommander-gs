@@ -396,7 +396,7 @@ def main():
     fasta_engine = conf.get('MicrosatelliteParameters', 'FastaEngine').lower()
     combine_loci = conf.getboolean('MicrosatelliteParameters', 'CombineLoci')
     combine_loci_dist = conf.getint('MicrosatelliteParameters', 'CombineLociDist')
-    multiprocessing = conf.getboolean('Multiprocessing', 'MULTIPROCESSING')
+    m_processing = conf.getboolean('Multiprocessing', 'MULTIPROCESSING')
     get_num_procs = conf.get('Multiprocessing','processors')
     
     conn = MySQLdb.connect(user     = db[0],
@@ -425,7 +425,7 @@ def main():
     conn.commit()
     motifs = motifCollection(min_length = [10,6,4,4,4,4], scan_type = "2+", \
                 perfect = True)
-    if multiprocessing:
+    if m_processing:
         # get num processors
         n_procs = get_num_procs
         if n_procs == 'Auto':
@@ -466,7 +466,7 @@ def main():
                     threads.append(p)
                     if (pb_inc+1)%1000 == 0:
                         pb.__call__(pb_inc+1)
-                    elif pb_inc + 1 == rows.rowcount:
+                    elif pb_inc + 1 == data.readcount:
                         pb.__call__(pb_inc+1)
                     pb_inc += 1
                 else:
