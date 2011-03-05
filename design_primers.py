@@ -19,7 +19,7 @@ import optparse
 import progress
 import ConfigParser
 import multiprocessing
-from modules import p3wrapr
+import p3wrapr
 
 
 def interface():
@@ -328,6 +328,7 @@ def worker(db, container, settings, tag_settings):
             sequence.repeat_relative_end - sequence.repeat_relative_start)
         primer3 = p3wrapr.Primers()
         primer3.pick(settings, sequence = str(sequence.seq), target=target, name = 'primers')
+        #primer3.tag(tag_settings, M13F='GTAAAACGACGGCCAG')
         primer3.tag(tag_settings, CAG = 'CAGTCGGGCGTCATCA', M13R = 'GGAAACAGCTATGACCAT')
         if primer3.tagged_good:
             primer3.pigtail(tag_settings, 'GTTT')
