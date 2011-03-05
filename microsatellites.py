@@ -22,7 +22,7 @@ import progress
 import optparse
 import operator
 import MySQLdb.cursors
-from modules import msat
+import msat
 
 
 def softmask(record):
