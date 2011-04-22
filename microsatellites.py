@@ -423,7 +423,8 @@ def main():
     if combine_loci:
         createCombinedLociWithForeign(cur)
     conn.commit()
-    motifs = motifCollection(min_length = [10,6,4,4,4,4], scan_type = "2+", \
+    scan_type = conf.getboolean('MicrosatelliteParameters', 'ScanType')
+    motifs = motifCollection(min_length = [10,6,4,4,4,4], scan_type = scan_type, \
                 perfect = True)
     if m_processing:
         # get num processors
