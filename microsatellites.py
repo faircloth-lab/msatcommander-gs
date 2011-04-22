@@ -336,6 +336,8 @@ class Sequence():
             self.create_biopython_iterator(**kwargs)
         elif self.engine == 'pyfasta' and kwargs['data_type'] == 'fasta':
             self.create_pyfasta_iterator(**kwargs)
+        elif self.engine == 'twobit' and kwargs['data_type'] == 'fasta':
+            self.create_twobit_iterator(**kwargs)
     
     def create_mysql_iterator(self, **kwargs):
         cur = kwargs['cursor']
@@ -354,7 +356,11 @@ class Sequence():
         self.read = iter(self.db_values)
     
     def create_twobit_iterator(self, **kwargs):
-        pass
+        import bx.seq.twobit
+        self.fasta = bx.seq.twobit.TwoBitFile(file(kwargs['input']))
+        self.readcount = self.fasta.seq_count
+        self.db_values = zip(range(self.fasta.seq_count), sorted(self.fasta.keys()))
+        self.read = iter(self.db_values)
     
     def create_pyfasta_iterator(self, **kwargs):
         from pyfasta import Fasta
@@ -423,7 +429,7 @@ def main():
     if combine_loci:
         createCombinedLociWithForeign(cur)
     conn.commit()
-    scan_type = conf.getboolean('MicrosatelliteParameters', 'ScanType')
+    scan_type = conf.get('MicrosatelliteParameters', 'ScanType')
     motifs = motifCollection(min_length = [10,6,4,4,4,4], scan_type = scan_type, \
                 perfect = True)
     if m_processing:
@@ -450,10 +456,12 @@ def main():
                         record = data.read.next()
                         iden = record[0]
                         record = cPickle.loads(record[1])
-                    elif data.engine == 'pyfasta' or 'biopython':
+                    elif data.engine == 'pyfasta' or data.engine == 'biopython':
                         iden, chromo = data.read.next()
-                        #pdb.set_trace()
                         record = SequenceWrapper(iden, data.fasta[chromo])
+                    elif data.engine == 'twobit':
+                        iden, chromo = data.read.next()
+                        record = SequenceWrapper(iden, data.fasta[chromo][:])
                     p = multiprocessing.Process(target=worker, args=(
                                     iden,
                                     record,
@@ -497,6 +505,10 @@ def main():
                 elif data.engine == 'biopython':
                     iden, chromo = data.read.next()
                     record = data.fasta[chromo]
+                elif data.engine == 'twobit':
+                    iden, chromo = data.read.next()
+                    record = SequenceWrapper(iden, data.fasta[chromo][:])
+                pdb.set_trace()
                 worker(iden, record, motifs, db, have_sequence_table,
                         combine_loci, combine_loci_dist)
                 row = cur.fetchone()
