@@ -115,7 +115,7 @@ def create_tagged_primers_table(cur):
         ) ENGINE=InnoDB''')
 
 
-def insert_primers(cur, seq_iden, iden, primer3):
+def insert_primers(cur, seq_iden, iden, absolute_start, primer3):
     for i,p in primer3.primers.iteritems():
         if i != 'metadata':
             # create a copy of the dict, to which we add the
@@ -124,6 +124,9 @@ def insert_primers(cur, seq_iden, iden, primer3):
             td['SEQUENCE_ID'] = seq_iden
             td['ID'] = iden
             td['PRIMER'] = i
+            for pos in ['PRIMER_LEFT', 'PRIMER_RIGHT']:
+                start, end = td[pos].split(',')
+                td[pos] = "{0},{1}".format(absolute_start + int(pos), end)
             cur.execute('''INSERT INTO primers VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )''', (
                 td['SEQUENCE_ID'],
@@ -277,21 +280,26 @@ def get_sequence_for_chunk(data, chunk, flank = 300):
             preceding = chromo[0:row[3]]
             middle = chromo[row[3]:row[4]]
             following = chromo[row[4]:len(chromo)]
+            sequence.absolute_start = 0
         
         elif start < 0:
             preceding = chromo[0:row[3]]
             middle = chromo[row[3]:row[4]]
             following = chromo[row[4]:end]
+            sequence.absolute_start = 0
         
         elif end > len(data.fasta[row[0]]):
             preceding = chromo[start:row[3]]
             middle = chromo[row[3]:row[4]]
             following = chromo[row[4]:len(chromo)]
+            sequence.absolute_start = start
         
         else:
             preceding = chromo[start:row[3]]
             middle = chromo[row[3]:row[4]]
             following = following = chromo[row[4]:end]
+            sequence.absolute_start = start
+            
         temp_seq = preceding + middle + following
         # convert masked bases to N
         mask_seq = string.translate(temp_seq, trans)
@@ -332,7 +340,7 @@ def worker(db, container, settings, tag_settings):
         primer3.tag(tag_settings, CAG = 'CAGTCGGGCGTCATCA', M13R = 'GGAAACAGCTATGACCAT')
         if primer3.tagged_good:
             primer3.pigtail(tag_settings, 'GTTT')
-        insert_primers(cur, sequence.sequence_id, sequence.id, primer3)
+        insert_primers(cur, sequence.sequence_id, sequence.id, sequence.absolute_start, primer3)
         insert_tagged_primers(cur, conn, sequence.sequence_id, sequence.id, primer3)
     # make sure we commit our results before closing
     conn.commit()
