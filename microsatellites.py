@@ -66,7 +66,7 @@ def combineLoci(record, min_distance):
     Essentially, we are running a pairwise comparison across all motifs
     located to determine which are within a predetermined distance from 
     one another'''
-    record.combined = {}
+    record.combined = ()
     if record.matches:
         temp_combined = []
         reorder = ()
@@ -77,22 +77,20 @@ def combineLoci(record, min_distance):
         # sort it
         reorder = sorted(reorder, key=operator.itemgetter(2))
         # combine adjacent loci at < min_distance
-        for i in reorder:
+        for k,v in enumerate(reorder):
             included = False
             if not temp_combined:
-                temp_combined.append([i])
+                temp_combined.append([v])
             else:
                 for gp, g in enumerate(temp_combined):
                     for elem in g:
-                        if i[2] - elem[3] <= min_distance:
-                            temp_combined[gp].append(i)
+                        if v[2] - elem[3] <= min_distance:
+                            temp_combined[gp].append(v)
                             included = True
                             break
+                # ensure we add those that do not combine
                 if not included:
-                    temp_combined.append([i])
-        #if len(temp_combined[0]) > 1:
-        #    pdb.set_trace()
-        # re-key
+                    temp_combined.append([v])
         for group in temp_combined:
             motifs = []
             if len(group) > 1:
@@ -118,7 +116,7 @@ def combineLoci(record, min_distance):
                 name += '%s(%s)%s' % (member[0], length, spacer)
                 motifs.append([member[0],length])
                 member_count += 1
-            record.combined[name] = (((gs, ge), gp, gf, member_count, motifs),)
+            record.combined += (((gs, ge), gp, gf, member_count, motifs, name),)
     return record
 
 def worker(id, record, motifs, db, have_sequence_table, combine_loci, combine_loci_dist):
@@ -154,17 +152,16 @@ def worker(id, record, motifs, db, have_sequence_table, combine_loci, combine_lo
         # setup our own auto-incrementing index, so we can use value
         # later without multiprocessing causing us a problem
         combined_id = 0
-        for combined in record.combined:
-            for repeat in record.combined[combined]:
-                cur.execute('''INSERT INTO combined (sequence_id, id, motif, start, end, 
-                preceding, following, members) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ''', (id, combined_id, combined, repeat[0][0], repeat[0][1], repeat[1], 
-                repeat[2], repeat[3]))
-                for m in repeat[4]:
-                    cur.execute('''INSERT INTO combined_components 
-                        (sequence_id, combined_id, motif, length) VALUES 
-                        (%s, %s, %s, %s)''', (id, combined_id, m[0], m[1]))
-                combined_id += 1
+        for combined in record.combined:                
+            cur.execute('''INSERT INTO combined (sequence_id, id, motif, start, end, 
+            preceding, following, members) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ''', (id, combined_id, combined[-1], combined[0][0], combined[0][1], combined[1], 
+            combined[2], combined[3]))
+            for m in combined[4]:
+                cur.execute('''INSERT INTO combined_components 
+                    (sequence_id, combined_id, motif, length) VALUES 
+                    (%s, %s, %s, %s)''', (id, combined_id, m[0], m[1]))
+            combined_id += 1
     # update blob in 'main' table
     if have_sequence_table:
         if record.matches:
@@ -508,7 +505,7 @@ def main():
                 elif data.engine == 'twobit':
                     iden, chromo = data.read.next()
                     record = SequenceWrapper(iden, data.fasta[chromo][:])
-                pdb.set_trace()
+                #pdb.set_trace()
                 worker(iden, record, motifs, db, have_sequence_table,
                         combine_loci, combine_loci_dist)
                 row = cur.fetchone()
