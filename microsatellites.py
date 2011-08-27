@@ -94,6 +94,7 @@ def combineLoci(record, min_distance):
         #    pdb.set_trace()
         # re-key
         for group in temp_combined:
+            motifs = []
             if len(group) > 1:
                 gs = group[0][2]
                 ge = group[-1][2]
@@ -113,9 +114,11 @@ def combineLoci(record, min_distance):
                         spacer = ''
                 else:
                     spacer = ''
-                name += '%s(%s)%s' % (member[0], (member[3]-member[2])/len(member[0]), spacer)
+                length = (member[3]-member[2])/len(member[0])
+                name += '%s(%s)%s' % (member[0], length, spacer)
+                motifs.append([member[0],length])
                 member_count += 1
-            record.combined[name] = (((gs, ge), gp, gf, member_count),)
+            record.combined[name] = (((gs, ge), gp, gf, member_count, motifs),)
     return record
 
 def worker(id, record, motifs, conf):
@@ -133,29 +136,40 @@ def worker(id, record, motifs, conf):
         db=conf.get('Database','DATABASE'))
     cur = conn.cursor()
     # add new data for mask table (which = microsatellite repeats)
+    # setup our own auto-incrementing index, so we can use value
+    # later
+    msat_id = 0
     for match in record.matches:
         for repeat in record.matches[match]:
             motif_count = (repeat[0][1] - repeat[0][0])/len(match)
             #pdb.set_trace()
-            cur.execute('''INSERT INTO mask (id, name, motif, start, end, 
-            preceding, following, motif_count) VALUES (%s, %s,%s,%s,%s,%s,%s,%s) 
-            ''', (id, record.id, match, repeat[0][0], repeat[0][1], repeat[1], 
+            cur.execute('''INSERT INTO mask (sequence_id, id, name, motif, start, end, 
+            preceding, following, motif_count) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) 
+            ''', (id, msat_id, record.id, match, repeat[0][0], repeat[0][1], repeat[1], 
             repeat[2], motif_count))
+            msat_id += 1
     if conf.getboolean('GeneralParameters', 'CombineLoci'):
+        # setup our own auto-incrementing index, so we can use value
+        # later
+        combined_id = 0
         for combined in record.combined:
             for repeat in record.combined[combined]:
-                cur.execute('''INSERT INTO combined (id, motif, start, end, 
-                preceding, following, members) VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ''', (id, combined, repeat[0][0], repeat[0][1], repeat[1], 
+                cur.execute('''INSERT INTO combined (sequence_id, id, motif, start, end, 
+                preceding, following, members) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ''', (id, combined_id, combined, repeat[0][0], repeat[0][1], repeat[1], 
                 repeat[2], repeat[3]))
+                for m in repeat[4]:
+                    cur.execute('''INSERT INTO combined_components (sequence_id, combined_id, motif, length) VALUES (%s, %s, %s, %s)''', (id, combined_id, m[0], m[1]))
+                combined_id += 1
     # update blob in 'main' table
-    if record.matches:
-        record_pickle = cPickle.dumps(record,1)
-        # replace sequence with masked version in seq_trimmed - we can always
-        # call UPPER() on it for non-masked version
-        cur.execute('''UPDATE sequence SET seq_trimmed = %s, record = %s, msat = %s WHERE id = %s''', (record.seq.masked, record_pickle, True, id))
-    else:
-        cur.execute('''UPDATE sequence SET msat = %s WHERE id = %s''', (False, id))
+    if conf.getboolean('Tables', 'Sequence'):
+        if record.matches:
+            record_pickle = cPickle.dumps(record,1)
+            # replace sequence with masked version in seq_trimmed - we can always
+            # call UPPER() on it for non-masked version
+            cur.execute('''UPDATE sequence SET seq_trimmed = %s, record = %s, msat = %s WHERE id = %s''', (record.seq.masked, record_pickle, True, id))
+        else:
+            cur.execute('''UPDATE sequence SET msat = %s WHERE id = %s''', (False, id))
     cur.close()
     conn.commit()
     conn.close()
@@ -194,42 +208,106 @@ def motifCollection(**kwargs):
         possible_motifs[scan][0], kwargs['perfect']),)
     return collection
 
-def createMaskTable(cur):
+def createMaskTableWithForeign(cur):
     try:
         cur.execute('''DROP TABLE mask''')
     except:
         pass
     # TODO:  Switch index to reference sequence.id versus autoincrement value and create an index on it
     cur.execute('''CREATE TABLE mask (
-        id INT(10) UNSIGNED NOT NULL, 
+        sequence_id INT(10) UNSIGNED NOT NULL, 
+        id int(10) UNSIGNED NOT NULL,
         name VARCHAR(100), 
-        motif VARCHAR(8), start 
-        MEDIUMINT UNSIGNED, 
-        end MEDIUMINT UNSIGNED, 
-        preceding MEDIUMINT UNSIGNED, 
-        following MEDIUMINT UNSIGNED, 
-        motif_count SMALLINT UNSIGNED, 
+        motif VARCHAR(8), 
+        start BIGINT UNSIGNED, 
+        end BIGINT UNSIGNED, 
+        preceding BIGINT UNSIGNED, 
+        following BIGINT UNSIGNED, 
+        motif_count MEDIUMINT UNSIGNED, 
+        INDEX (sequence_id),
         INDEX (id),
         INDEX (name),
-        FOREIGN KEY (id) REFERENCES sequence (id)) ENGINE=InnoDB''')
+        FOREIGN KEY (sequence_id) REFERENCES sequence (id)) ENGINE=InnoDB''')
 
-def createCombinedLoci(cur):
+def createMaskTableWithoutForeign(cur):
+    try:
+        cur.execute('''DROP TABLE mask''')
+    except:
+        pass
+    # TODO:  Switch index to reference sequence.id versus autoincrement value and create an index on it
+    cur.execute('''CREATE TABLE mask (
+        sequence_id INT(10) UNSIGNED NOT NULL, 
+        id int(10) UNSIGNED NOT NULL,
+        name VARCHAR(100), 
+        motif VARCHAR(8), 
+        start BIGINT UNSIGNED, 
+        end BIGINT UNSIGNED, 
+        preceding BIGINT UNSIGNED, 
+        following BIGINT UNSIGNED, 
+        motif_count MEDIUMINT UNSIGNED, 
+        PRIMARY KEY (sequence_id, id),
+        INDEX (name)) ENGINE=InnoDB''')
+
+def createCombinedLociWithForeign(cur):
     try:
         cur.execute('''DROP TABLE combined''')
     except:
         pass
     # TODO:  Switch index to reference sequence.id versus autoincrement value and create an index on it
     cur.execute('''CREATE TABLE combined (
-        id INT(10) UNSIGNED NOT NULL, 
+        sequence_id INT(10) UNSIGNED NOT NULL, 
+        id int(10) UNSIGNED NOT NULL,
         motif TEXT, 
-        start MEDIUMINT UNSIGNED, 
-        end MEDIUMINT UNSIGNED,
-        preceding MEDIUMINT UNSIGNED,
-        following MEDIUMINT UNSIGNED,
-        members SMALLINT UNSIGNED,
+        start BIGINT UNSIGNED, 
+        end BIGINT UNSIGNED,
+        preceding BIGINT UNSIGNED,
+        following BIGINT UNSIGNED,
+        members MEDIUMINT UNSIGNED,
         INDEX(id),
+        PRIMARY KEY(id),
         INDEX(members),
-        FOREIGN KEY (id) REFERENCES sequence (id)) ENGINE=InnoDB''')
+        FOREIGN KEY (sequence_id) REFERENCES sequence (id)) ENGINE=InnoDB''')
+    createCombinedComponentsTable(cur)
+
+def createCombinedLociWithoutForeign(cur):
+    try:
+        cur.execute('''DROP TABLE combined_components''')
+    except:
+        pass
+    try:
+        cur.execute('''DROP TABLE combined''')
+    except:
+        pass
+    # TODO:  Switch index to reference sequence.id versus autoincrement value and create an index on it
+    cur.execute('''CREATE TABLE combined (
+        sequence_id INT(10) UNSIGNED NOT NULL, 
+        id int(10) UNSIGNED NOT NULL,
+        motif TEXT, 
+        start BIGINT UNSIGNED, 
+        end BIGINT UNSIGNED,
+        preceding BIGINT UNSIGNED,
+        following BIGINT UNSIGNED,
+        members MEDIUMINT UNSIGNED,
+        PRIMARY KEY (sequence_id, id),
+        INDEX(sequence_id),
+        INDEX(id),
+        INDEX(members)
+        ) ENGINE=InnoDB''')
+    createCombinedComponentsTable(cur)
+
+def createCombinedComponentsTable(cur):
+    try:
+        cur.execute('''DROP TABLE combined_components''')
+    except:
+        pass
+    cur.execute('''CREATE TABLE combined_components (
+        sequence_id INT(10) UNSIGNED NOT NULL,
+        combined_id INT(10) UNSIGNED NOT NULL,
+        motif TEXT,
+        length MEDIUMINT UNSIGNED NOT NULL,
+        FOREIGN KEY (sequence_id, combined_id) REFERENCES combined (sequence_id, id)
+        ) ENGINE=InnoDB''')
+
 
 def updateSequenceTable(cur):
     # TODO:  This is dumb.  Just add the column in the linkers.py
@@ -274,6 +352,34 @@ metavar='FILE')
         sys.exit(2)
     return options, arg
 
+class Sequence():
+    """docstring for Sequence"""
+    def __init__(self, data_type, **kwargs):
+        self.input = data_type
+        if data_type == 'mysql':
+            self.create_mysql_iterator()
+        elif data_type == 'fasta':
+            self.create_fasta_iterator(**kwargs)
+    
+    def get_sequence_count(self, input):
+        '''Determine the number of sequence reads in the input'''
+        handle = open(input, 'rU')
+        self.rowcount = handle.read().count('>')
+        handle.close()
+    
+    def create_mysql_iterator(self):
+        self.row = cur.execute('''SELECT id, record FROM sequence WHERE n_count <= 2 AND
+                        trimmed_len > 40''')
+        self.rowcount = cur.rowcount
+    
+    def create_fasta_iterator(self, **kwargs):
+        from Bio import SeqIO
+        self.get_sequence_count(kwargs['input'])
+        self.row = SeqIO.parse(open(kwargs['input'], 'rU'), 'fasta')
+    
+    def create_twobit_iterator(self, **kwargs):
+        pass
+
 def main():
     start_time = time.time()
     options, arg = interface()
@@ -281,31 +387,30 @@ def main():
     print 'Started: ', time.strftime("%a %b %d, %Y  %H:%M:%S", time.localtime(start_time))
     conf = ConfigParser.ConfigParser()
     conf.read(options.conf)
-    # get sequence from dbase.  Use the server-side cursor to keep the load
-    # down from large result sets
-    #conn = MySQLdb.connect(user="python", passwd="BgDBYUTvmzA3", 
-    #db="454_msatcommander", cursorclass=MySQLdb.cursors.SSCursor)
     conn = MySQLdb.connect(user=conf.get('Database','USER'), 
         passwd=conf.get('Database','PASSWORD'), 
         db=conf.get('Database','DATABASE'))
     cur = conn.cursor()
-    createMaskTable(cur)
-    #updateSequenceTable(cur)
-    if conf.getboolean('GeneralParameters', 'CombineLoci'):
-        createCombinedLoci(cur)
+    sequenceTable = conf.getboolean('Tables', 'Sequence')
+    #
+    if sequenceTable:
+        createMaskTableWithForeign(cur)
+        if conf.getboolean('GeneralParameters', 'CombineLoci'):
+            createCombinedLociWithForeign(cur)
+    else:
+        createMaskTableWithoutForeign(cur)
+        if conf.getboolean('GeneralParameters', 'CombineLoci'):
+            createCombinedLociWithoutForeign(cur)
     conn.commit()
-    cur.execute('''SELECT id, record FROM sequence WHERE n_count <= 2 AND
-    trimmed_len > 40''')
-    #pdb.set_trace()
+    rows = Sequence('fasta', input = conf.get('Input','sequence'))
     # setup motifs
     motifs = motifCollection(min_length = [10,6,4,4,4,4], scan_type = "2+", \
-    perfect = True)
-    # add microsatellite method to sequence
+                perfect = True)
     if conf.getboolean('Multiprocessing', 'MULTIPROCESSING'):
         # get num processors
         n_procs = conf.get('Multiprocessing','processors')
         if n_procs == 'Auto':
-            n_procs = multiprocessing.cpu_count() - 1
+            n_procs = multiprocessing.cpu_count() - 2
         else:
             n_procs = int(n_procs)
         print 'Multiprocessing.  Number of processors = %s\n' % n_procs
@@ -313,50 +418,58 @@ def main():
         #count = 0
         threads = []
         # access the data on sequence by sequence basis to avoid reading the 
-        # entire table contents into memory
-        rowcount = cur.rowcount
-        pb = progress.bar(0,rowcount,60)
+        # entire table contents into memory        
+        pb = progress.bar(0,rows.rowcount,60)
         pb_inc = 0
-        row = cur.fetchone()
-        while row is not None:
-        #index = 0
-        #while index < 5000:
-            if len(threads) < n_procs:
-                #row = cur.fetchone()
-                # convert BLOB back to sequence record
-                id, record = row[0], cPickle.loads(row[1])
-                p = multiprocessing.Process(target=worker, args=(id, record, motifs, conf))
-                p.start()
-                threads.append(p)
-                row = cur.fetchone()
-                if (pb_inc+1)%1000 == 0:
-                    pb.__call__(pb_inc+1)
-                elif pb_inc + 1 == rowcount:
-                    pb.__call__(pb_inc+1)
-                pb_inc += 1
-            else:
-                for t in threads:
-                    if not t.is_alive():
-                        threads.remove(t)
+        try:
+            while rows:
+                if len(threads) < n_procs:
+                    # convert BLOB back to sequence record
+                    if sequenceTable:
+                        data = rows.row.next()
+                        id, record = data[0], cPickle.loads(data[1])
+                    else:
+                        id, record = pb_inc, rows.row.next()
+                    p = multiprocessing.Process(target=worker, args=(id, record, motifs, conf))
+                    p.start()
+                    threads.append(p)
+                    if (pb_inc+1)%1000 == 0:
+                        pb.__call__(pb_inc+1)
+                    elif pb_inc + 1 == rows.rowcount:
+                        pb.__call__(pb_inc+1)
+                    pb_inc += 1
+                else:
+                    for t in threads:
+                        if not t.is_alive():
+                            threads.remove(t)
+        except StopIteration:
+            pass
     else:
         print 'Not using multiprocessing\n'
         # access the data on sequence by sequence basis to avoid 
         # reading the entire table contents into memory
-        rowcount = cur.rowcount
-        pb = progress.bar(0,rowcount,60)
+        pb = progress.bar(0,rows.rowcount,60)
         pb_inc = 0
-        row = cur.fetchone()
-        while row is not None:
-            # convert BLOB back to sequence record
-            id, record = row[0], cPickle.loads(row[1])
-            #pdb.set_trace()
-            worker(id, record, motifs, conf)
-            row = cur.fetchone()
-            if (pb_inc+1)%1000 == 0:
-                pb.__call__(pb_inc+1)
-            elif pb_inc + 1 == rowcount:
-                pb.__call__(pb_inc+1)
-            pb_inc += 1
+        #pdb.set_trace()
+        try:
+            while rows:
+                if sequenceTable:
+                    # convert BLOB back to sequence record
+                    data = rows.row.next()
+                    id, record = data[0], cPickle.loads(data[1])
+                else:
+                    id, record = pb_inc, rows.row.next()
+                #pdb.set_trace()
+                worker(id, record, motifs, conf)
+                break
+                row = cur.fetchone()
+                if (pb_inc+1)%1000 == 0:
+                    pb.__call__(pb_inc+1)
+                elif pb_inc + 1 == rows.rowcount:
+                    pb.__call__(pb_inc+1)
+                pb_inc += 1
+        except StopIteration:
+            pass
     print '\n'
     cur.close()
     conn.close()
