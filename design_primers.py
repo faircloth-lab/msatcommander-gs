@@ -126,7 +126,7 @@ def insert_primers(cur, seq_iden, iden, absolute_start, primer3):
             td['PRIMER'] = i
             for pos in ['PRIMER_LEFT', 'PRIMER_RIGHT']:
                 start, end = td[pos].split(',')
-                td[pos] = "{0},{1}".format(absolute_start + int(pos), end)
+                td[pos] = "{0},{1}".format(absolute_start + int(start), end)
             cur.execute('''INSERT INTO primers VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )''', (
                 td['SEQUENCE_ID'],
@@ -222,12 +222,12 @@ class Sequence():
         self.engine = engine
         if self.engine == 'mysql' and function == 'iterator':
             self.create_mysql_iterator(**kwargs)
-        elif self.engine == 'biopython' and kwargs['data_type'] == 'fasta' and function == 'iterator':
+        elif self.engine == 'biopython' and kwargs['data_type'] == 'fasta':
             self.create_biopython_iterator(**kwargs)
-        elif self.engine == 'pyfasta' and function == 'iterator':
+        elif self.engine == 'pyfasta' and kwargs['data_type'] == 'fasta':
             self.create_pyfasta_iterator(**kwargs)
-        elif self.engine =='pyfasta' and function == 'getter':
-            self.get_pyfasta_reads(**kwargs)
+        elif self.engine == 'twobit' and kwargs['data_type'] == 'twobit':
+            self.create_twobit_iterator(**kwargs)
 
     def create_mysql_iterator(self, **kwargs):
         cur = kwargs['cursor']
@@ -246,7 +246,11 @@ class Sequence():
         self.read = iter(self.db_values)
 
     def create_twobit_iterator(self, **kwargs):
-        pass
+        import bx.seq.twobit
+        self.fasta = bx.seq.twobit.TwoBitFile(file(kwargs['input']))
+        self.readcount = self.fasta.seq_count
+        self.db_values = zip(range(self.fasta.seq_count), sorted(self.fasta.keys()))
+        self.read = iter(self.db_values)
 
     def create_pyfasta_iterator(self, **kwargs):
         from pyfasta import Fasta
@@ -261,6 +265,12 @@ class Sequence():
         self.fasta = Fasta(kwargs['input'])
         self.readcount = len(self.fasta)
 
+class SequenceWrapper():
+    """this class wraps pyfasta objects to make them appear similar to 
+    biopython sequence records"""
+    def __init__(self, iden, sequence):
+        self.id = iden
+        self.seq = sequence
 
 
 def get_sequence_for_chunk(data, chunk, flank = 300):
@@ -273,6 +283,10 @@ def get_sequence_for_chunk(data, chunk, flank = 300):
         # extends beyond the length of the physical sequence.  In the current
         # case we should fail gracefully, and still attempt to design primers
         # with what we've got
+        #pdb.set_trace()
+        iden = '{0}_{1}_{2}'.format(row[0],row[1],row[2])
+        # create sequence object w/ empty sequence
+        sequence = SequenceWrapper(iden, '')
         chromo = data.fasta[row[0]]
         start = (row[3] - flank)
         end = (row[4] + flank)
@@ -303,8 +317,7 @@ def get_sequence_for_chunk(data, chunk, flank = 300):
         temp_seq = preceding + middle + following
         # convert masked bases to N
         mask_seq = string.translate(temp_seq, trans)
-        iden = '{0}_{1}_{2}'.format(row[0],row[1],row[2])
-        sequence = SequenceWrapper(iden, mask_seq)
+        sequence.seq = mask_seq
         sequence.chromo = row[0]
         sequence.sequence_id = row[1]
         sequence.id = row[2]
@@ -314,13 +327,6 @@ def get_sequence_for_chunk(data, chunk, flank = 300):
         # add the sequences to the container
         container.append(sequence)
     return container
-
-class SequenceWrapper():
-    """this class wraps pyfasta objects to make them appear similar to 
-    biopython sequence records"""
-    def __init__(self, iden, sequence):
-        self.id = iden
-        self.seq = sequence
 
 def worker(db, container, settings, tag_settings):
     """docstring for worker"""
@@ -347,8 +353,6 @@ def worker(db, container, settings, tag_settings):
     # close our db connection
     cur.close()
     conn.close()
-    
-
 
 def main():
     start_time = time.time()
@@ -363,6 +367,11 @@ def main():
           )
     m_processing = conf.getboolean('Multiprocessing', 'MULTIPROCESSING')
     num_procs = conf.get('Multiprocessing','processors')
+    fasta_engine = conf.get('MicrosatelliteParameters', 'FastaEngine').lower()
+    try:
+        data_type = conf.get('Input', 'Type')
+    except:
+        data_type = 'fasta'
     # build our configuration
     conn = MySQLdb.connect(
         user    = db[0],
@@ -385,7 +394,7 @@ def main():
             db_chunk.append(sequence_ids[span:span + 1000])
     db_chunk_len = float(len(db_chunk))
     db_chunk = iter(db_chunk)
-    data = Sequence(input = conf.get('Input','sequence'), engine = 'pyfasta', function = 'getter')
+    data = Sequence(input = conf.get('Input','sequence'), engine = fasta_engine, data_type = data_type)
     # we only need a single instance of our primer design settings
     settings = p3wrapr.primer.Settings()
     settings.basic()
