@@ -263,6 +263,7 @@ def createCombinedLociWithForeign(cur):
         members MEDIUMINT UNSIGNED,
         PRIMARY KEY(sequence_id, id),
         INDEX(members),
+        INDEX(id),
         FOREIGN KEY (sequence_id) REFERENCES sequence (id)) ENGINE=InnoDB''')
     createCombinedComponentsTable(cur)
 
@@ -276,6 +277,7 @@ def createCombinedComponentsTable(cur):
         combined_id INT(10) UNSIGNED NOT NULL,
         motif TEXT,
         length MEDIUMINT UNSIGNED NOT NULL,
+        INDEX(combined_id),
         FOREIGN KEY (sequence_id, combined_id) REFERENCES combined (sequence_id, id)
         ) ENGINE=InnoDB''')
 
@@ -333,7 +335,7 @@ class Sequence():
             self.create_biopython_iterator(**kwargs)
         elif self.engine == 'pyfasta' and kwargs['data_type'] == 'fasta':
             self.create_pyfasta_iterator(**kwargs)
-        elif self.engine == 'twobit' and kwargs['data_type'] == 'fasta':
+        elif self.engine == 'twobit' and kwargs['data_type'] == 'twobit':
             self.create_twobit_iterator(**kwargs)
     
     def create_mysql_iterator(self, **kwargs):
@@ -397,6 +399,10 @@ def main():
           )
     have_sequence_table = conf.getboolean('MicrosatelliteParameters', 'HaveSequenceTable')
     fasta_engine = conf.get('MicrosatelliteParameters', 'FastaEngine').lower()
+    try:
+        data_type = conf.get('Input', 'Type')
+    except:
+        data_type = 'fasta'
     combine_loci = conf.getboolean('MicrosatelliteParameters', 'CombineLoci')
     combine_loci_dist = conf.getint('MicrosatelliteParameters', 'CombineLociDist')
     m_processing = conf.getboolean('Multiprocessing', 'MULTIPROCESSING')
@@ -417,7 +423,7 @@ def main():
         # get out data
         data = Sequence(engine = fasta_engine, 
             input = conf.get('Input','sequence'), 
-            data_type = 'fasta'
+            data_type = data_type
             )
         cur.executemany('''INSERT INTO sequence (id, name) VALUES (%s, %s)''', data.db_values)
     # create our msat table
